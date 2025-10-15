@@ -418,10 +418,10 @@ if uploaded:
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-     # ============= 💬 气泡图（按问题颜色区分，无大小） =============
+    # ============= 💬 气泡图（按问题颜色区分，无大小） =============
     st.header("💬 指标与满意度关系（气泡图）")
 
-    if not cur_df.empty:
+    if not lvl1.empty or not lvl2.empty:
         st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系（颜色区分问题类别，去除气泡大小差异）。")
 
         # 可选层级与指标
@@ -432,30 +432,33 @@ if uploaded:
         # 根据层级选择字段
         problem_field = "class_one" if bubble_level == "一级问题" else "class_two"
 
-        # 聚合到层级
-        df_bubble = cur_df.copy().dropna(subset=[x_metric, y_metric])
-        df_bubble = df_bubble.groupby(problem_field, as_index=False).agg({
-            "处理时长_P90": "mean",
-            "回复次数_P90": "mean",
-            "满意度_4_5占比": "mean"
-        })
+        # ✅ 保证使用对应层级的聚合结果
+        cur_src = lvl1 if bubble_level == "一级问题" else lvl2
+        df_bubble = cur_src.copy().dropna(subset=[x_metric, y_metric])
 
-        if not df_bubble.empty:
+        if problem_field not in df_bubble.columns:
+            st.warning(f"⚠️ 当前层级 {bubble_level} 的数据中未找到字段 {problem_field}")
+        elif df_bubble.empty:
+            st.warning("⚠️ 当前筛选条件下暂无可用数据。")
+        else:
+            # 聚合
+            df_bubble = df_bubble.groupby(problem_field, as_index=False).agg({
+                "处理时长_P90": "mean",
+                "回复次数_P90": "mean",
+                "满意度_4_5占比": "mean"
+            })
+
             fig_bubble = go.Figure()
 
-            # ✅ 安全颜色映射生成
-        if problem_field in df_bubble.columns:
+            # ✅ 安全颜色映射
             categories = sorted(df_bubble[problem_field].dropna().unique())
             palette = (px.colors.qualitative.Set3 if hasattr(px.colors.qualitative, "Set3")
                        else px.colors.qualitative.Set2)
             palette = palette * (len(categories) // len(palette) + 1)
             color_map = {cat: palette[i] for i, cat in enumerate(categories)}
-        else:
-            st.error(f"⚠️ 数据中不存在字段 {problem_field}")
-            color_map = {}
 
-            # 绘制每个问题
-            for pb in sorted(df_bubble[problem_field].unique()):
+            # 绘制
+            for pb in categories:
                 data = df_bubble[df_bubble[problem_field] == pb]
                 fig_bubble.add_trace(go.Scatter(
                     x=data[x_metric],
@@ -477,7 +480,7 @@ if uploaded:
                     )
                 ))
 
-            # ✅ 趋势线（灰色虚线）
+            # 趋势线
             if len(df_bubble) > 2:
                 z = np.polyfit(df_bubble[x_metric], df_bubble[y_metric], 1)
                 p = np.poly1d(z)
@@ -489,9 +492,12 @@ if uploaded:
                     name="趋势线"
                 ))
 
-            # ✅ 计算相关系数
-            corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
-            st.markdown(f"📈 **相关系数 r = {corr:.3f}** （{x_metric} 与 {y_metric}）")
+            # 相关系数
+            if df_bubble[x_metric].nunique() > 1 and df_bubble[y_metric].nunique() > 1:
+                corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
+                st.markdown(f"📈 **相关系数 r = {corr:.3f}** （{x_metric} 与 {y_metric}）")
+            else:
+                st.markdown("⚠️ 样本不足或数据无差异，无法计算相关系数。")
 
             fig_bubble.update_layout(
                 title=f"{bubble_level}：{x_metric} 与 {y_metric} 的关系（按问题颜色区分）",
