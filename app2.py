@@ -12,7 +12,7 @@ st.set_page_config(page_title="问题层级处理时效分析", layout="wide")
 st.markdown("""
 <style>
     .main { background-color: #F5F6FA; }
-    h1 { color: #2B3A67; text-align: center; padding: 0.5rem 1rem; border-bottom: 3px solid #5B8FF9; }
+    h1 { color: #2B3A67; text-align: center; padding: 0.5rem 0; border-bottom: 3px solid #5B8FF9; }
     h2, h3 { color: #2B3A67; margin-top: 1.2rem; }
     div.stButton > button:first-child {
         background-color: #5B8FF9; color: white; border: none; border-radius: 8px;
@@ -27,7 +27,7 @@ st.title("💬 问题层级处理时效分析")
 # ===================== 工具函数 =====================
 NULL_LIKE_REGEX = {r"^[-‐-‒–—―−]+$": None, r"^(null|none|nan|NaN|NA)$": None, r"^\s*$": None}
 
-def clean_numeric(s: pd.Series) -> pd.Series:
+def clean_numeric(s):
     s = s.astype(str).str.strip().replace(NULL_LIKE_REGEX, regex=True).str.replace(",", "", regex=False)
     return pd.to_numeric(s, errors="coerce")
 
@@ -76,7 +76,7 @@ def export_sheets(buff, sheets, filters_text):
     with pd.ExcelWriter(buff, engine="openpyxl") as writer:
         pd.DataFrame({"筛选条件": [filters_text]}).to_excel(writer, index=False, sheet_name="筛选说明")
         for name, df in sheets.items():
-            if isinstance(df, pd.DataFrame) and not df.empty:
+            if not df.empty:
                 df.to_excel(writer, index=False, sheet_name=name)
     buff.seek(0)
 
@@ -111,9 +111,11 @@ if uploaded:
     st.sidebar.header("🔎 数据筛选条件")
 
     min_date, max_date = df["ticket_created_datetime"].min(), df["ticket_created_datetime"].max()
-    default_start = (min_date.date() if pd.notna(min_date) else datetime.today().date())
-    default_end   = (max_date.date() if pd.notna(max_date) else datetime.today().date())
-    start_date, end_date = st.sidebar.date_input("选择时间范围", value=(default_start, default_end))
+    start_date, end_date = st.sidebar.date_input(
+        "选择时间范围",
+        value=(min_date.date() if min_date else datetime.today().date(),
+               max_date.date() if max_date else datetime.today().date())
+    )
 
     month_sel = st.sidebar.multiselect("月份", sorted(df["month"].dropna().unique()))
     bl_sel = st.sidebar.multiselect("业务线", sorted(df["business_line"].dropna().unique()) if "business_line" in df.columns else [])
@@ -146,6 +148,36 @@ if uploaded:
     tab1.dataframe(lvl1, use_container_width=True)
     tab2.dataframe(lvl2, use_container_width=True)
 
+    # ============= 🏆 Top5 榜单（带颜色标注） =============
+    st.markdown("<h2 style='text-align:center; color:#2B3A67;'>🏆 Top5 榜单</h2>", unsafe_allow_html=True)
+    x_col = "class_one"
+    df_rank = (
+        lvl1.groupby(x_col, as_index=False)
+        .agg({
+            "处理时长_P90": "mean",
+            "满意度_4_5占比": "mean",
+            "样本量": "sum"
+        })
+    )
+
+    col1, col2 = st.columns(2)
+    def highlight(val, reverse=False):
+        if pd.isna(val): return ""
+        color = "#FF4D4F" if (val > 0.7 and reverse) or (val < 0.3 and not reverse) else "#52C41A" if (val > 0.7 and not reverse) or (val < 0.3 and reverse) else ""
+        return f"color:{color}; font-weight:600;" if color else ""
+
+    with col1:
+        st.markdown(f"<h3 style='color:#2B3A67;'>⏱️ 处理时长最慢 Top5（按{x_col}）</h3>", unsafe_allow_html=True)
+        if not df_rank.empty:
+            top5_slow = df_rank.sort_values("处理时长_P90", ascending=False).head(5)
+            st.dataframe(top5_slow.style.map(lambda v: highlight(v, reverse=True), subset=["处理时长_P90"]))
+
+    with col2:
+        st.markdown(f"<h3 style='color:#2B3A67;'>😞 满意度最低 Top5（按{x_col}）</h3>", unsafe_allow_html=True)
+        if not df_rank.empty:
+            top5_bad = df_rank.sort_values("满意度_4_5占比", ascending=True).head(5)
+            st.dataframe(top5_bad.style.map(lambda v: highlight(v, reverse=False), subset=["满意度_4_5占比"]))
+
     # ============= 🌍 热力图分析（稳定版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
     if not df_f.empty:
@@ -167,7 +199,6 @@ if uploaded:
                 z_vals = df_hm.values
                 z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
 
-                # ✅ 安全 colorbar + title 关键字写法
                 fig_hm = go.Figure(
                     data=go.Heatmap(
                         z=z_vals,
@@ -181,7 +212,6 @@ if uploaded:
                     )
                 )
 
-                # ✅ 改为关键字形式 title_x / title_font 等
                 fig_hm.update_layout(
                     title=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
                     title_x=0.5,
