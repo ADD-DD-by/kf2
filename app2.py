@@ -146,9 +146,8 @@ if uploaded:
     tab1.dataframe(lvl1, use_container_width=True)
     tab2.dataframe(lvl2, use_container_width=True)
 
-    # ============= 🌍 热力图分析（最终稳定+优化视觉版） =============
+    # ============= 🌍 热力图分析（稳定版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
-
     if not df_f.empty:
         st.markdown("展示不同维度组合下的关键指标表现，可用于横向比较渠道、国家或业务线。")
 
@@ -168,7 +167,7 @@ if uploaded:
                 z_vals = df_hm.values
                 z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
 
-                # ✅ 安全 colorbar 写法 + 白底浅色渐变
+                # ✅ 安全 colorbar + title 关键字写法
                 fig_hm = go.Figure(
                     data=go.Heatmap(
                         z=z_vals,
@@ -182,23 +181,16 @@ if uploaded:
                     )
                 )
 
+                # ✅ 改为关键字形式 title_x / title_font 等
                 fig_hm.update_layout(
-                    title=dict(
-                        text=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
-                        font=dict(size=20, color="#2B3A67"),
-                        x=0.5, xanchor="center"
-                    ),
-                    xaxis=dict(
-                        title=x_dim,
-                        tickangle=-30,
-                        tickfont=dict(size=14, color="#2B3A67"),
-                        titlefont=dict(size=16, color="#2B3A67")
-                    ),
-                    yaxis=dict(
-                        title=y_dim,
-                        tickfont=dict(size=14, color="#2B3A67"),
-                        titlefont=dict(size=16, color="#2B3A67")
-                    ),
+                    title=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
+                    title_x=0.5,
+                    title_font=dict(size=20, color="#2B3A67"),
+                    xaxis_title=x_dim,
+                    yaxis_title=y_dim,
+                    xaxis_tickangle=-30,
+                    xaxis_tickfont=dict(size=14, color="#2B3A67"),
+                    yaxis_tickfont=dict(size=14, color="#2B3A67"),
                     plot_bgcolor="white",
                     paper_bgcolor="white",
                     height=700,
