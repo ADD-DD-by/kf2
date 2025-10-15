@@ -22,7 +22,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💬 问题层级处理时效分析)")
+st.title("💬 问题层级处理时效分析")
 
 # ===================== 工具函数 =====================
 NULL_LIKE_REGEX = {r"^[-‐-‒–—―−]+$": None, r"^(null|none|nan|NaN|NA)$": None, r"^\s*$": None}
