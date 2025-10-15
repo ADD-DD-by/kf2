@@ -207,79 +207,89 @@ if uploaded:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # ============= 💬 气泡图 =============
-    st.header("💬 回复次数/处理时长 与 满意度关系（气泡图）")
+     # ============= 💬 气泡图（按问题颜色区分，无大小） =============
+    st.header("💬 指标与满意度关系（气泡图）")
 
     if not cur_df.empty:
-        scatter_choice = st.radio("选择横轴指标", ["处理时长_P90", "回复次数_P90"], horizontal=True)
-        x_col_name = scatter_choice
-        y_col_name = "满意度_4_5占比"
-        size_col = "样本量"
+        st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系（颜色区分问题类别，去除气泡大小差异）。")
 
-        # ✅ 统一到一级问题维度
-        if "class_one" in cur_df.columns:
-            df_scatter = cur_df.groupby("class_one", as_index=False).agg({
-                "处理时长_P90": "mean",
-                "回复次数_P90": "mean",
-                "满意度_4_5占比": "mean",
-                "样本量": "sum"
-            })
-        else:
-            df_scatter = cur_df.copy()
+        # 可选层级与指标
+        bubble_level = st.radio("选择展示层级", ["一级问题", "二级问题"], horizontal=True)
+        x_metric = st.selectbox("选择横轴指标", ["处理时长_P90", "回复次数_P90"], index=1)
+        y_metric = "满意度_4_5占比"
 
-        df_scatter["样本量_scaled"] = (df_scatter[size_col] / df_scatter[size_col].max()) * 80 + 10
-        df_scatter = df_scatter.dropna(subset=[x_col_name, y_col_name])
+        # 根据层级选择字段
+        problem_field = "class_one" if bubble_level == "一级问题" else "class_two"
 
-        if not df_scatter.empty:
-            fig_scatter = go.Figure()
-            for pb in sorted(df_scatter["class_one"].unique()):
-                data = df_scatter[df_scatter["class_one"] == pb]
-                fig_scatter.add_trace(go.Scatter(
-                    x=data[x_col_name],
-                    y=data[y_col_name],
+        # 聚合到层级
+        df_bubble = cur_df.copy().dropna(subset=[x_metric, y_metric])
+        df_bubble = df_bubble.groupby(problem_field, as_index=False).agg({
+            "处理时长_P90": "mean",
+            "回复次数_P90": "mean",
+            "满意度_4_5占比": "mean"
+        })
+
+        if not df_bubble.empty:
+            fig_bubble = go.Figure()
+
+            # 为每个问题分配不同颜色
+            color_map = {
+                name: color for name, color in zip(
+                    sorted(df_bubble[problem_field].unique()),
+                    px.colors.qualitative.Set3 * 5  # 自动循环颜色表
+                )
+            }
+
+            # 绘制每个问题
+            for pb in sorted(df_bubble[problem_field].unique()):
+                data = df_bubble[df_bubble[problem_field] == pb]
+                fig_bubble.add_trace(go.Scatter(
+                    x=data[x_metric],
+                    y=data[y_metric],
                     mode="markers+text",
                     name=str(pb),
-                    text=[pb] * len(data),
+                    text=[pb],
                     textposition="top center",
                     marker=dict(
-                        size=data["样本量_scaled"],
-                        color=data[x_col_name],
-                        colorscale="YlOrRd",
-                        showscale=False,
+                        size=16,
+                        color=color_map[pb],
                         line=dict(width=1, color="gray"),
-                        opacity=0.85
+                        opacity=0.9
                     ),
                     hovertemplate=(
-                        f"一级问题: %{{text}}<br>"
-                        f"{x_col_name}: %{{x:.2f}}<br>"
-                        f"{y_col_name}: %{{y:.2f}}<br>"
-                        f"样本量: %{{marker.size:.0f}}<extra></extra>"
+                        f"{problem_field}: %{{text}}<br>"
+                        f"{x_metric}: %{{x:.2f}}<br>"
+                        f"{y_metric}: %{{y:.2f}}<extra></extra>"
                     )
                 ))
 
             # ✅ 趋势线（灰色虚线）
-            if len(df_scatter) > 2:
-                z = np.polyfit(df_scatter[x_col_name], df_scatter[y_col_name], 1)
+            if len(df_bubble) > 2:
+                z = np.polyfit(df_bubble[x_metric], df_bubble[y_metric], 1)
                 p = np.poly1d(z)
-                fig_scatter.add_trace(go.Scatter(
-                    x=df_scatter[x_col_name],
-                    y=p(df_scatter[x_col_name]),
+                fig_bubble.add_trace(go.Scatter(
+                    x=df_bubble[x_metric],
+                    y=p(df_bubble[x_metric]),
                     mode="lines",
                     line=dict(color="gray", dash="dot"),
                     name="趋势线"
                 ))
 
-            fig_scatter.update_layout(
-                title=f"一级问题：{x_col_name} 与 {y_col_name} 的关系（气泡大小=样本量）",
-                xaxis_title=x_col_name,
-                yaxis_title=y_col_name,
+            # ✅ 计算相关系数
+            corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
+            st.markdown(f"📈 **相关系数 r = {corr:.3f}** （{x_metric} 与 {y_metric}）")
+
+            fig_bubble.update_layout(
+                title=f"{bubble_level}：{x_metric} 与 {y_metric} 的关系（按问题颜色区分）",
+                xaxis_title=x_metric,
+                yaxis_title=y_metric,
                 plot_bgcolor="white",
                 height=650,
                 title_x=0.5,
                 title_font=dict(size=20, color="#2B3A67"),
                 legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
             )
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_bubble, use_container_width=True)
 
        # ============= 📈 月度趋势图（可选指标、层级、筛选） =============
     st.header("📈 指标月度趋势分析")
