@@ -207,6 +207,146 @@ if uploaded:
             legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
         )
         st.plotly_chart(fig, use_container_width=True)
+    # ============= 🔍 单问题明细散点：回复次数/处理时长 vs 评分 =============
+    st.header("🔍 单问题分类：明细散点（回复次数/处理时长 vs 评分）")
+    st.markdown("选择一个问题分类，查看每条样本在 **回复次数 或 处理时长** 与 **评分** 之间的关系。")
+
+    # 选择层级 & 问题分类
+    detail_level = st.radio("选择问题层级用于散点", ["一级问题", "二级问题"], horizontal=True)
+    problem_field = "class_one" if detail_level == "一级问题" else "class_two"
+
+    # 仅从筛选后的原始数据 df_f 中取（不是汇总表），保证是一条一条样本点
+    if problem_field not in df_f.columns:
+        st.info(f"当前数据没有字段：{problem_field}")
+    else:
+        # 允许用户选具体的一个问题分类
+        problem_list = sorted(df_f[problem_field].dropna().unique().tolist())
+        if not problem_list:
+            st.info("当前筛选下没有可选的问题分类。")
+        else:
+            picked_problem = st.selectbox(f"选择{detail_level}", problem_list)
+
+            # 选择横轴：回复次数 or 处理时长
+            x_choice = st.radio("选择横轴指标", ["回复次数（message_count）", "处理时长（处理时长）"], horizontal=True)
+            x_col_raw = "message_count" if "回复次数" in x_choice else "处理时长"
+
+            # 取到该问题分类的样本明细
+            pts = df_f[df_f[problem_field] == picked_problem].copy()
+
+            # 需要的列：x_col_raw 与 评分
+            need_cols = [x_col_raw, "评分"]
+            pts = pts.dropna(subset=[c for c in need_cols if c in pts.columns])
+
+            # 类型安全：再次转数值
+            if x_col_raw in pts.columns:
+                pts[x_col_raw] = pd.to_numeric(pts[x_col_raw], errors="coerce")
+            if "评分" in pts.columns:
+                pts["评分"] = pd.to_numeric(pts["评分"], errors="coerce")
+            pts = pts.dropna(subset=need_cols)
+
+            # 可选：轻微抖动，避免遮挡
+            add_jitter = st.checkbox("为散点添加轻微抖动以减少遮挡", value=True)
+            if add_jitter:
+                rng = np.random.default_rng(42)
+                # 仅对数值列加非常小的噪声
+                pts["_x"] = pts[x_col_raw].astype(float) + rng.normal(0, max(pts[x_col_raw].std() * 0.01, 1e-6), len(pts))
+                pts["_y"] = pts["评分"].astype(float) + rng.normal(0, 0.02, len(pts))
+            else:
+                pts["_x"] = pts[x_col_raw].astype(float)
+                pts["_y"] = pts["评分"].astype(float)
+
+            if pts.empty:
+                st.info("该问题分类下没有足够的数据点。")
+            else:
+                # 计算相关系数与样本数
+                try:
+                    r = np.corrcoef(pts[x_col_raw], pts["评分"])[0, 1]
+                except Exception:
+                    r = np.nan
+
+                st.markdown(f"📈 **相关系数 r = {r:.3f}**（{x_col_raw} 与 评分） | 样本数：**{len(pts)}**")
+
+                # 趋势线（线性回归）
+                trend_x = pts[x_col_raw].to_numpy(dtype=float)
+                trend_y = pts["评分"].to_numpy(dtype=float)
+                line_trace = None
+                if len(pts) > 2 and np.isfinite(trend_x).all() and np.isfinite(trend_y).all():
+                    z = np.polyfit(trend_x, trend_y, 1)
+                    p = np.poly1d(z)
+                    # 为了趋势线更平滑，按范围画
+                    xs = np.linspace(trend_x.min(), trend_x.max(), 100)
+                    ys = p(xs)
+                else:
+                    xs, ys = None, None
+
+                # 颜色按渠道/国家/业务线三选一（可选）
+                color_dim = st.selectbox("散点着色维度（可选）", ["不着色", "渠道 ticket_channel", "国家 site_code", "业务线 business_line"], index=0)
+                if color_dim == "不着色":
+                    color_vals = None
+                    legend_name = None
+                else:
+                    dim_map = {
+                        "渠道 ticket_channel": "ticket_channel",
+                        "国家 site_code": "site_code",
+                        "业务线 business_line": "business_line",
+                    }
+                    legend_name = dim_map[color_dim]
+                    if legend_name in pts.columns:
+                        color_vals = pts[legend_name].fillna("未知").astype(str)
+                    else:
+                        color_vals = None
+                        legend_name = None
+
+                fig_det = go.Figure()
+
+                if color_vals is None:
+                    # 单色散点
+                    fig_det.add_trace(go.Scattergl(
+                        x=pts["_x"], y=pts["_y"],
+                        mode="markers",
+                        name=picked_problem,
+                        marker=dict(size=9, color="#5B8FF9", opacity=0.65, line=dict(width=0.5, color="gray")),
+                        hovertemplate=f"{detail_level}: {picked_problem}<br>{x_col_raw}: %{{x:.2f}}<br>评分: %{{y:.2f}}<extra></extra>"
+                    ))
+                else:
+                    # 分组着色：每个类别一条 trace
+                    for val in sorted(color_vals.unique()):
+                        sub = pts[color_vals == val]
+                        fig_det.add_trace(go.Scattergl(
+                            x=sub["_x"], y=sub["_y"],
+                            mode="markers",
+                            name=str(val),
+                            marker=dict(size=9, opacity=0.65, line=dict(width=0.5, color="gray")),
+                            hovertemplate=f"{legend_name}: {val}<br>{x_col_raw}: %{{x:.2f}}<br>评分: %{{y:.2f}}<extra></extra>"
+                        ))
+
+                # 加趋势线
+                if xs is not None:
+                    fig_det.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines",
+                        name="趋势线", line=dict(color="gray", width=2, dash="dot")
+                    ))
+
+                # 中位数参考线（可选）
+                show_ref = st.checkbox("显示中位数参考线", value=False)
+                if show_ref:
+                    fig_det.add_hline(y=float(np.median(trend_y)), line=dict(color="#999999", width=1, dash="dash"), annotation_text="评分中位数")
+                    fig_det.add_vline(x=float(np.median(trend_x)), line=dict(color="#999999", width=1, dash="dash"), annotation_text=f"{x_col_raw}中位数")
+
+                fig_det.update_layout(
+                    title=f"{detail_level}：{picked_problem} —— {x_col_raw} vs 评分（明细散点）",
+                    xaxis_title=x_col_raw,
+                    yaxis_title="评分（1~5）",
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    height=640,
+                    title_x=0.5,
+                    title_font=dict(size=20, color="#2B3A67"),
+                    legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center"),
+                )
+                # 限制评分轴范围（可读性更好）
+                fig_det.update_yaxes(range=[0.5, 5.5])
+                st.plotly_chart(fig_det, use_container_width=True)
 
      # ============= 💬 气泡图（按问题颜色区分，无大小） =============
     st.header("💬 指标与满意度关系（气泡图）")
