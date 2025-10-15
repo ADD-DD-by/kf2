@@ -12,7 +12,7 @@ st.set_page_config(page_title="问题层级处理时效分析", layout="wide")
 st.markdown("""
 <style>
     .main { background-color: #F5F6FA; }
-    h1 { color: #2B3A67; text-align: center; padding: 0.5rem 0; border-bottom: 3px solid #5B8FF9; }
+    h1 { color: #2B3A67; text-align: center; padding: 0.5rem 1rem; border-bottom: 3px solid #5B8FF9; }
     h2, h3 { color: #2B3A67; margin-top: 1.2rem; }
     div.stButton > button:first-child {
         background-color: #5B8FF9; color: white; border: none; border-radius: 8px;
@@ -27,7 +27,7 @@ st.title("💬 问题层级处理时效分析")
 # ===================== 工具函数 =====================
 NULL_LIKE_REGEX = {r"^[-‐-‒–—―−]+$": None, r"^(null|none|nan|NaN|NA)$": None, r"^\s*$": None}
 
-def clean_numeric(s):
+def clean_numeric(s: pd.Series) -> pd.Series:
     s = s.astype(str).str.strip().replace(NULL_LIKE_REGEX, regex=True).str.replace(",", "", regex=False)
     return pd.to_numeric(s, errors="coerce")
 
@@ -76,7 +76,7 @@ def export_sheets(buff, sheets, filters_text):
     with pd.ExcelWriter(buff, engine="openpyxl") as writer:
         pd.DataFrame({"筛选条件": [filters_text]}).to_excel(writer, index=False, sheet_name="筛选说明")
         for name, df in sheets.items():
-            if not df.empty:
+            if isinstance(df, pd.DataFrame) and not df.empty:
                 df.to_excel(writer, index=False, sheet_name=name)
     buff.seek(0)
 
@@ -111,10 +111,11 @@ if uploaded:
     st.sidebar.header("🔎 数据筛选条件")
 
     min_date, max_date = df["ticket_created_datetime"].min(), df["ticket_created_datetime"].max()
+    default_start = (min_date.date() if pd.notna(min_date) else datetime.today().date())
+    default_end   = (max_date.date() if pd.notna(max_date) else datetime.today().date())
     start_date, end_date = st.sidebar.date_input(
         "选择时间范围",
-        value=(min_date.date() if min_date else datetime.today().date(),
-               max_date.date() if max_date else datetime.today().date())
+        value=(default_start, default_end)
     )
 
     month_sel = st.sidebar.multiselect("月份", sorted(df["month"].dropna().unique()))
@@ -162,9 +163,12 @@ if uploaded:
         df_plot = cur_df.copy()
         for m in metrics:
             df_plot[m] = pd.to_numeric(df_plot[m], errors="coerce")
-            df_plot[m + "_norm"] = (df_plot[m] - df_plot[m].min()) / (df_plot[m].max() - df_plot[m].min()) if df_plot[m].max() != df_plot[m].min() else df_plot[m]
+            df_plot[m + "_norm"] = (
+                (df_plot[m] - df_plot[m].min()) / (df_plot[m].max() - df_plot[m].min())
+                if df_plot[m].max() != df_plot[m].min() else df_plot[m]
+            )
 
-        # ✅ 修复：仅对数值列求平均
+        # 仅对数值列求平均，避免对象列报错
         numeric_cols = df_plot.select_dtypes(include=[np.number]).columns.tolist()
         df_plot = df_plot.groupby(x_col, as_index=False)[numeric_cols].mean()
 
@@ -177,19 +181,22 @@ if uploaded:
         if selected_problems:
             df_plot = df_plot[df_plot[x_col].isin(selected_problems)]
 
-        bar_df = df_plot.melt(id_vars=[x_col], value_vars=["回复次数_P90_norm", "处理时长_P90_norm"],
-                              var_name="指标", value_name="标准化数值")
-        bar_df["指标"] = bar_df["指标"].replace({
-            "回复次数_P90_norm": "回复次数P90",
-            "处理时长_P90_norm": "处理时长P90"
-        })
+        bar_df = df_plot.melt(
+            id_vars=[x_col],
+            value_vars=["回复次数_P90_norm", "处理时长_P90_norm"],
+            var_name="指标",
+            value_name="标准化数值"
+        ).replace({"回复次数_P90_norm": "回复次数P90", "处理时长_P90_norm": "处理时长P90"})
 
         fig = go.Figure()
         for metric, color in zip(["回复次数P90", "处理时长P90"], ["#5B8FF9", "#5AD8A6"]):
             data = bar_df[bar_df["指标"] == metric]
-            fig.add_trace(go.Bar(x=data[x_col], y=data["标准化数值"], name=metric,
-                                 marker_color=color, text=[f"{v:.2f}" for v in data["标准化数值"]],
-                                 textposition="outside"))
+            fig.add_trace(go.Bar(
+                x=data[x_col], y=data["标准化数值"], name=metric,
+                marker_color=color,
+                text=[f"{v:.2f}" for v in data["标准化数值"]],
+                textposition="outside"
+            ))
 
         fig.add_trace(go.Scatter(
             x=df_plot[x_col], y=df_plot["满意度_4_5占比_norm"],
@@ -212,21 +219,24 @@ if uploaded:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-          # ============= 🏆 Top5 榜单 =============
+    # ============= 🏆 Top5 榜单 =============
     st.markdown("<h2 style='text-align:center; color:#2B3A67;'>🏆 Top5 榜单</h2>", unsafe_allow_html=True)
 
     # 自动根据层级选字段
     x_col = "class_one" if level_choice == "一级问题" else "class_two"
 
     # 先聚合一次，防止重复问题多条记录
-    df_rank = (
-        cur_df.groupby(x_col, as_index=False)
-        .agg({
-            "处理时长_P90": "mean",
-            "满意度_4_5占比": "mean",
-            "样本量": "sum"
-        })
-    )
+    if not cur_df.empty:
+        df_rank = (
+            cur_df.groupby(x_col, as_index=False)
+            .agg({
+                "处理时长_P90": "mean",
+                "满意度_4_5占比": "mean",
+                "样本量": "sum"
+            })
+        )
+    else:
+        df_rank = pd.DataFrame(columns=[x_col, "处理时长_P90", "满意度_4_5占比", "样本量"])
 
     col1, col2 = st.columns(2)
 
@@ -256,7 +266,7 @@ if uploaded:
                 use_container_width=True
             )
 
-        # ============= 🌍 热力图分析 =============
+    # ============= 🌍 热力图分析 =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
 
     if not df_f.empty:
@@ -271,27 +281,36 @@ if uploaded:
             st.warning("⚠️ X 轴与 Y 轴不能相同，请选择不同维度。")
         else:
             # 计算热力图数据
-            df_hm = df_f.copy()
-            df_hm = group_metrics(df_hm, [], [x_dim, y_dim])
-            df_hm = df_hm.pivot(index=y_dim, columns=x_dim, values=metric_sel)
+            df_hm = group_metrics(df_f.copy(), [], [x_dim, y_dim]).pivot(index=y_dim, columns=x_dim, values=metric_sel)
 
             if df_hm.empty:
                 st.info("暂无数据可绘制热力图，请调整筛选条件。")
             else:
-                # 绘制热力图
-                z_text = df_hm.round(2).astype(str)
+                # 保证轴为字符串，避免序列化问题
+                x_vals = [str(v) for v in df_hm.columns.tolist()]
+                y_vals = [str(v) for v in df_hm.index.tolist()]
+                z_vals = df_hm.values
+
+                # 准备单元格文本
+                z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
 
                 fig_hm = go.Figure(
                     data=go.Heatmap(
-                        z=df_hm.values,
-                        x=df_hm.columns,
-                        y=df_hm.index,
+                        z=z_vals,
+                        x=x_vals,
+                        y=y_vals,
                         colorscale="RdYlBu_r",
-                        colorbar=dict(title=metric_sel, titlefont=dict(size=16), tickfont=dict(size=14)),
+                        # ✅ 合法的 colorbar 配置（不使用 textfont）
+                        colorbar=dict(
+                            title=str(metric_sel),
+                            titlefont=dict(size=16, color="black"),
+                            tickfont=dict(size=14, color="black")
+                        ),
                         hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
-                        text=z_text.values,
+                        text=z_text,
                         texttemplate="%{text}",
-                        textfont={"size": 14, "color": "black"}
+                        # textfont 在 Heatmap 级别是被支持的；如遇老版本兼容问题，可注释掉下一行
+                        textfont=dict(size=14, color="black")
                     )
                 )
 
@@ -319,7 +338,6 @@ if uploaded:
                 )
 
                 st.plotly_chart(fig_hm, use_container_width=True)
-
 
     # ============= 导出报告 =============
     st.header("📤 导出分析报告")
