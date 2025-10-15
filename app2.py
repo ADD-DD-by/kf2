@@ -207,79 +207,126 @@ if uploaded:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ============= 🏆 Top5 榜单（带颜色标注） =============
-    st.markdown("<h2 style='text-align:center; color:#2B3A67;'>🏆 Top5 榜单</h2>", unsafe_allow_html=True)
+    # ============= 💬 气泡图 =============
+    st.header("💬 回复次数/处理时长 与 满意度关系（气泡图）")
+    if not cur_df.empty:
+        scatter_choice = st.radio("选择横轴指标", ["处理时长_P90", "回复次数_P90"], horizontal=True)
+        x_col_name = scatter_choice
+        y_col_name = "满意度_4_5占比"
+        size_col = "样本量"
+
+        problem_field = "class_one" if level_choice == "一级问题" else "class_two"
+        df_scatter = cur_df.copy().dropna(subset=[x_col_name, y_col_name, size_col])
+        df_scatter["样本量_scaled"] = (df_scatter[size_col] / df_scatter[size_col].max()) * 80 + 10
+
+        if not df_scatter.empty:
+            fig_scatter = go.Figure()
+            for pb in sorted(df_scatter[problem_field].unique()):
+                data = df_scatter[df_scatter[problem_field] == pb]
+                fig_scatter.add_trace(go.Scatter(
+                    x=data[x_col_name],
+                    y=data[y_col_name],
+                    mode="markers+text",
+                    name=str(pb),
+                    text=[pb] * len(data),
+                    textposition="top center",
+                    marker=dict(
+                        size=data["样本量_scaled"],
+                        color=data[x_col_name],
+                        colorscale="YlOrRd",
+                        showscale=False,
+                        line=dict(width=1, color="gray"),
+                        opacity=0.85
+                    ),
+                    hovertemplate=(
+                        f"{problem_field}: %{{text}}<br>"
+                        f"{x_col_name}: %{{x:.2f}}<br>"
+                        f"{y_col_name}: %{{y:.2f}}<br>"
+                        f"样本量: %{{marker.size:.0f}}<extra></extra>"
+                    )
+                ))
+
+            # 拟合趋势线
+            if len(df_scatter) > 2:
+                z = np.polyfit(df_scatter[x_col_name], df_scatter[y_col_name], 1)
+                p = np.poly1d(z)
+                fig_scatter.add_trace(go.Scatter(
+                    x=df_scatter[x_col_name],
+                    y=p(df_scatter[x_col_name]),
+                    mode="lines",
+                    line=dict(color="gray", dash="dot"),
+                    name="趋势线"
+                ))
+
+            fig_scatter.update_layout(
+                title=f"{level_choice}：{x_col_name} 与 {y_col_name} 的关系（按问题类型）",
+                xaxis_title=x_col_name,
+                yaxis_title=y_col_name,
+                plot_bgcolor="white",
+                height=650,
+                title_x=0.5,
+                title_font=dict(size=20, color="#2B3A67"),
+                legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # ============= 📈 月度趋势图 =============
+    st.header("📈 不同问题下 处理时长 与 回复次数 的月度趋势")
+    if "month" in df_f.columns:
+        trend_level = st.radio("选择层级查看趋势", ["一级问题", "二级问题"], horizontal=True)
+        df_trend = lvl1 if trend_level == "一级问题" else lvl2
+        df_trend = df_trend.dropna(subset=["month", "处理时长_P90", "回复次数_P90"])
+        if not df_trend.empty:
+            problem_field = "class_one" if trend_level == "一级问题" else "class_two"
+            problem_sel = st.multiselect(f"选择要展示的{trend_level}", sorted(df_trend[problem_field].unique()), default=sorted(df_trend[problem_field].unique())[:5])
+            df_trend = df_trend[df_trend[problem_field].isin(problem_sel)]
+
+            fig_trend = go.Figure()
+            for pb in problem_sel:
+                data = df_trend[df_trend[problem_field] == pb]
+                fig_trend.add_trace(go.Scatter(
+                    x=data["month"], y=data["处理时长_P90"],
+                    name=f"{pb}-处理时长", mode="lines+markers",
+                    line=dict(width=2), marker=dict(size=6)
+                ))
+                fig_trend.add_trace(go.Scatter(
+                    x=data["month"], y=data["回复次数_P90"],
+                    name=f"{pb}-回复次数", mode="lines+markers",
+                    line=dict(dash="dot", width=2), marker=dict(size=6)
+                ))
+
+            fig_trend.update_layout(
+                title=f"{trend_level}：处理时长 与 回复次数 月度趋势",
+                xaxis_title="月份",
+                yaxis_title="数值",
+                plot_bgcolor="white",
+                height=650,
+                title_x=0.5,
+                title_font=dict(size=20, color="#2B3A67"),
+                legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ============= 🏆 Top5 榜单 =============
+    st.header("🏆 Top5 榜单")
     x_col = "class_one"
     df_rank = lvl1.groupby(x_col, as_index=False).agg({
         "处理时长_P90": "mean", "满意度_4_5占比": "mean", "样本量": "sum"
     })
 
-    def highlight(val, reverse=False):
-        if pd.isna(val): return ""
-        color = "#FF4D4F" if (val > 0.7 and reverse) or (val < 0.3 and not reverse) else "#52C41A" if (val > 0.7 and not reverse) or (val < 0.3 and reverse) else ""
-        return f"color:{color}; font-weight:600;" if color else ""
-
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"<h3 style='color:#2B3A67;'>⏱️ 处理时长最慢 Top5</h3>", unsafe_allow_html=True)
+        st.subheader("⏱️ 处理时长最慢 Top5")
         if not df_rank.empty:
             top5_slow = df_rank.sort_values("处理时长_P90", ascending=False).head(5)
-            st.dataframe(top5_slow.style.map(lambda v: highlight(v, reverse=True), subset=["处理时长_P90"]))
+            st.dataframe(top5_slow, use_container_width=True)
     with col2:
-        st.markdown(f"<h3 style='color:#2B3A67;'>😞 满意度最低 Top5</h3>", unsafe_allow_html=True)
+        st.subheader("😞 满意度最低 Top5")
         if not df_rank.empty:
             top5_bad = df_rank.sort_values("满意度_4_5占比", ascending=True).head(5)
-            st.dataframe(top5_bad.style.map(lambda v: highlight(v, reverse=False), subset=["满意度_4_5占比"]))
+            st.dataframe(top5_bad, use_container_width=True)
 
     # ============= 🌍 热力图分析（稳定版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
     if not df_f.empty:
-        st.markdown("展示不同维度组合下的关键指标表现，可用于横向比较渠道、国家或业务线。")
-
-        x_dim = st.selectbox("选择 X 轴维度", ["business_line", "ticket_channel", "site_code"], index=0)
-        y_dim = st.selectbox("选择 Y 轴维度", ["ticket_channel", "site_code", "business_line"], index=1)
-        metric_sel = st.radio("选择指标", ["满意度_4_5占比", "处理时长_P90", "回复次数_P90"], horizontal=True)
-
-        if x_dim == y_dim:
-            st.warning("⚠️ X 轴与 Y 轴不能相同，请选择不同维度。")
-        else:
-            df_hm = group_metrics(df_f.copy(), [], [x_dim, y_dim]).pivot(index=y_dim, columns=x_dim, values=metric_sel)
-            if not df_hm.empty:
-                x_vals = [str(v) for v in df_hm.columns.tolist()]
-                y_vals = [str(v) for v in df_hm.index.tolist()]
-                z_vals = df_hm.values
-                z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
-
-                fig_hm = go.Figure(data=go.Heatmap(
-                    z=z_vals, x=x_vals, y=y_vals, colorscale="YlGnBu",
-                    colorbar_title=str(metric_sel),
-                    hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
-                    text=z_text, texttemplate="%{text}"
-                ))
-
-                fig_hm.update_layout(
-                    title=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
-                    title_x=0.5,
-                    title_font=dict(size=20, color="#2B3A67"),
-                    xaxis_title=x_dim, yaxis_title=y_dim,
-                    xaxis_tickangle=-30,
-                    plot_bgcolor="white", paper_bgcolor="white",
-                    height=700, margin=dict(l=80, r=80, t=80, b=80)
-                )
-
-                st.plotly_chart(fig_hm, use_container_width=True)
-
-    # ============= 导出报告 =============
-    st.header("📤 导出分析报告")
-    filters_text = f"时间范围：{start_date} ~ {end_date}；业务线：{bl_sel or '全部'}；渠道：{ch_sel or '全部'}；国家：{site_sel or '全部'}"
-    buffer = BytesIO()
-    export_sheets(buffer, {"一级问题": lvl1, "二级问题": lvl2}, filters_text)
-    st.download_button(
-        "📥 下载带筛选说明的Excel报告",
-        data=buffer,
-        file_name="客服问题层级分析报告.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-else:
-    st.info("请上传包含【评分(1-5)】【处理时长】【message_count】【site_code】的数据文件。")
+        st.markdown
