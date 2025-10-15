@@ -207,22 +207,33 @@ if uploaded:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ============= 💬 气泡图 =============
+        # ============= 💬 气泡图 =============
     st.header("💬 回复次数/处理时长 与 满意度关系（气泡图）")
+
     if not cur_df.empty:
         scatter_choice = st.radio("选择横轴指标", ["处理时长_P90", "回复次数_P90"], horizontal=True)
         x_col_name = scatter_choice
         y_col_name = "满意度_4_5占比"
         size_col = "样本量"
 
-        problem_field = "class_one" if level_choice == "一级问题" else "class_two"
-        df_scatter = cur_df.copy().dropna(subset=[x_col_name, y_col_name, size_col])
+        # ✅ 统一到一级问题维度
+        if "class_one" in cur_df.columns:
+            df_scatter = cur_df.groupby("class_one", as_index=False).agg({
+                "处理时长_P90": "mean",
+                "回复次数_P90": "mean",
+                "满意度_4_5占比": "mean",
+                "样本量": "sum"
+            })
+        else:
+            df_scatter = cur_df.copy()
+
         df_scatter["样本量_scaled"] = (df_scatter[size_col] / df_scatter[size_col].max()) * 80 + 10
+        df_scatter = df_scatter.dropna(subset=[x_col_name, y_col_name])
 
         if not df_scatter.empty:
             fig_scatter = go.Figure()
-            for pb in sorted(df_scatter[problem_field].unique()):
-                data = df_scatter[df_scatter[problem_field] == pb]
+            for pb in sorted(df_scatter["class_one"].unique()):
+                data = df_scatter[df_scatter["class_one"] == pb]
                 fig_scatter.add_trace(go.Scatter(
                     x=data[x_col_name],
                     y=data[y_col_name],
@@ -239,14 +250,14 @@ if uploaded:
                         opacity=0.85
                     ),
                     hovertemplate=(
-                        f"{problem_field}: %{{text}}<br>"
+                        f"一级问题: %{{text}}<br>"
                         f"{x_col_name}: %{{x:.2f}}<br>"
                         f"{y_col_name}: %{{y:.2f}}<br>"
                         f"样本量: %{{marker.size:.0f}}<extra></extra>"
                     )
                 ))
 
-            # 拟合趋势线
+            # ✅ 趋势线（灰色虚线）
             if len(df_scatter) > 2:
                 z = np.polyfit(df_scatter[x_col_name], df_scatter[y_col_name], 1)
                 p = np.poly1d(z)
@@ -259,7 +270,7 @@ if uploaded:
                 ))
 
             fig_scatter.update_layout(
-                title=f"{level_choice}：{x_col_name} 与 {y_col_name} 的关系（按问题类型）",
+                title=f"一级问题：{x_col_name} 与 {y_col_name} 的关系（气泡大小=样本量）",
                 xaxis_title=x_col_name,
                 yaxis_title=y_col_name,
                 plot_bgcolor="white",
@@ -270,42 +281,74 @@ if uploaded:
             )
             st.plotly_chart(fig_scatter, use_container_width=True)
 
-    # ============= 📈 月度趋势图 =============
-    st.header("📈 不同问题下 处理时长 与 回复次数 的月度趋势")
+       # ============= 📈 月度趋势图（可选指标、层级、筛选） =============
+    st.header("📈 指标月度趋势分析")
+
     if "month" in df_f.columns:
-        trend_level = st.radio("选择层级查看趋势", ["一级问题", "二级问题"], horizontal=True)
+        st.markdown("用于分析不同问题在时间维度上的表现趋势，可选择指标、层级和筛选维度。")
+
+        # 用户选择层级、指标、维度
+        trend_level = st.radio("选择层级", ["一级问题", "二级问题"], horizontal=True)
+        trend_metric = st.selectbox("选择趋势指标", ["处理时长_P90", "回复次数_P90", "满意度_4_5占比"], index=0)
+        trend_dim = st.selectbox("选择分组维度", ["问题分类", "业务线", "渠道", "国家"], index=0)
+
+        # 对应字段映射
+        problem_field = "class_one" if trend_level == "一级问题" else "class_two"
         df_trend = lvl1 if trend_level == "一级问题" else lvl2
-        df_trend = df_trend.dropna(subset=["month", "处理时长_P90", "回复次数_P90"])
-        if not df_trend.empty:
-            problem_field = "class_one" if trend_level == "一级问题" else "class_two"
-            problem_sel = st.multiselect(f"选择要展示的{trend_level}", sorted(df_trend[problem_field].unique()), default=sorted(df_trend[problem_field].unique())[:5])
-            df_trend = df_trend[df_trend[problem_field].isin(problem_sel)]
 
-            fig_trend = go.Figure()
-            for pb in problem_sel:
-                data = df_trend[df_trend[problem_field] == pb]
-                fig_trend.add_trace(go.Scatter(
-                    x=data["month"], y=data["处理时长_P90"],
-                    name=f"{pb}-处理时长", mode="lines+markers",
-                    line=dict(width=2), marker=dict(size=6)
-                ))
-                fig_trend.add_trace(go.Scatter(
-                    x=data["month"], y=data["回复次数_P90"],
-                    name=f"{pb}-回复次数", mode="lines+markers",
-                    line=dict(dash="dot", width=2), marker=dict(size=6)
-                ))
+        if df_trend.empty:
+            st.info("暂无数据")
+        else:
+            # 确定分组字段
+            if trend_dim == "问题分类":
+                group_field = problem_field
+            elif trend_dim == "业务线":
+                group_field = "business_line"
+            elif trend_dim == "渠道":
+                group_field = "ticket_channel"
+            else:
+                group_field = "site_code"
 
-            fig_trend.update_layout(
-                title=f"{trend_level}：处理时长 与 回复次数 月度趋势",
-                xaxis_title="月份",
-                yaxis_title="数值",
-                plot_bgcolor="white",
-                height=650,
-                title_x=0.5,
-                title_font=dict(size=20, color="#2B3A67"),
-                legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
-            )
-            st.plotly_chart(fig_trend, use_container_width=True)
+            # 清理并聚合：避免同月多维重复
+            use_cols = [c for c in ["month", group_field, trend_metric] if c in df_trend.columns]
+            df_trend = df_trend[use_cols].dropna(subset=[trend_metric])
+            df_trend = df_trend.groupby(["month", group_field], as_index=False).mean()
+
+            # 选择显示的前若干类
+            top_groups = sorted(df_trend[group_field].unique())
+            sel_groups = st.multiselect(f"选择要显示的{trend_dim}",
+                                        top_groups,
+                                        default=top_groups[:5])
+            df_trend = df_trend[df_trend[group_field].isin(sel_groups)]
+
+            if df_trend.empty:
+                st.warning("当前筛选条件下无数据。")
+            else:
+                fig_trend = go.Figure()
+                for gp in sel_groups:
+                    data = df_trend[df_trend[group_field] == gp]
+                    fig_trend.add_trace(go.Scatter(
+                        x=data["month"],
+                        y=data[trend_metric],
+                        mode="lines+markers+text",
+                        name=str(gp),
+                        text=[f"{v:.2f}" for v in data[trend_metric]],
+                        textposition="top center",
+                        line=dict(width=2),
+                        marker=dict(size=6)
+                    ))
+
+                fig_trend.update_layout(
+                    title=f"{trend_level}：{trend_metric} 按 {trend_dim} 的月度趋势",
+                    xaxis_title="月份",
+                    yaxis_title=trend_metric,
+                    plot_bgcolor="white",
+                    height=650,
+                    title_x=0.5,
+                    title_font=dict(size=20, color="#2B3A67"),
+                    legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
+                )
+                st.plotly_chart(fig_trend, use_container_width=True)
 
     # ============= 🏆 Top5 榜单 =============
     st.header("🏆 Top5 榜单")
