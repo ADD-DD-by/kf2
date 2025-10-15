@@ -347,6 +347,76 @@ if uploaded:
                 # 限制评分轴范围（可读性更好）
                 fig_det.update_yaxes(range=[0.5, 5.5])
                 st.plotly_chart(fig_det, use_container_width=True)
+    # ============= 📊 各问题相关性分析（找出正/负相关最强的问题） =============
+    st.header("📊 各问题分类相关性分析（回复次数/处理时长 vs 评分）")
+    st.markdown("自动计算所有问题分类中【回复次数/处理时长】与【评分】的相关系数，找出正/负相关最强的问题。")
+
+    # 选择层级
+    corr_level = st.radio("选择层级", ["一级问题", "二级问题"], horizontal=True, key="corr_level_radio")
+    problem_field = "class_one" if corr_level == "一级问题" else "class_two"
+
+    # 数据准备：从 df_f 中取明细
+    if problem_field not in df_f.columns:
+        st.info(f"当前数据中未找到字段：{problem_field}")
+    else:
+        df_corr = df_f.copy().dropna(subset=[problem_field, "评分"])
+        df_corr["评分"] = pd.to_numeric(df_corr["评分"], errors="coerce")
+        df_corr["处理时长"] = pd.to_numeric(df_corr.get("处理时长", np.nan), errors="coerce")
+        df_corr["message_count"] = pd.to_numeric(df_corr.get("message_count", np.nan), errors="coerce")
+
+        # 选择分析的指标
+        metric_sel = st.selectbox("选择用于计算相关系数的指标", ["回复次数（message_count）", "处理时长（处理时长）"], index=0)
+        metric_col = "message_count" if "回复次数" in metric_sel else "处理时长"
+
+        # 计算每个问题的相关系数
+        corr_list = []
+        for pb, sub in df_corr.groupby(problem_field):
+            sub = sub.dropna(subset=[metric_col, "评分"])
+            if len(sub) >= 5:  # 至少5条样本再算
+                try:
+                    r = np.corrcoef(sub[metric_col], sub["评分"])[0, 1]
+                    corr_list.append((pb, len(sub), r))
+                except Exception:
+                    pass
+
+        if not corr_list:
+            st.warning("暂无足够数据计算相关系数。")
+        else:
+            df_r = pd.DataFrame(corr_list, columns=["问题分类", "样本量", "相关系数"])
+            df_r["相关系数"] = df_r["相关系数"].round(3)
+            df_r = df_r.sort_values("相关系数", ascending=False).reset_index(drop=True)
+
+            # 显示结果
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("📈 正相关最高 Top5（评分随指标升高而升高）")
+                st.dataframe(df_r.head(5), use_container_width=True)
+            with col2:
+                st.subheader("📉 负相关最高 Top5（评分随指标升高而下降）")
+                st.dataframe(df_r.tail(5).iloc[::-1], use_container_width=True)
+
+            # 绘制条形图
+            show_bar = st.checkbox("显示所有问题的相关系数条形图", value=False)
+            if show_bar:
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(
+                    x=df_r["问题分类"],
+                    y=df_r["相关系数"],
+                    marker_color=np.where(df_r["相关系数"] > 0, "#5B8FF9", "#E8684A"),
+                    text=df_r["相关系数"],
+                    textposition="outside"
+                ))
+                fig_bar.update_layout(
+                    title=f"{corr_level}：{metric_sel} 与 评分 的相关系数分布",
+                    xaxis_title="问题分类",
+                    yaxis_title="相关系数 r",
+                    xaxis_tickangle=-30,
+                    plot_bgcolor="white",
+                    height=600,
+                    title_x=0.5,
+                    title_font=dict(size=20, color="#2B3A67"),
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
 
      # ============= 💬 气泡图（按问题颜色区分，无大小） =============
     st.header("💬 指标与满意度关系（气泡图）")
