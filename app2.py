@@ -329,4 +329,64 @@ if uploaded:
     # ============= 🌍 热力图分析（稳定版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
     if not df_f.empty:
-        st.markdown
+        st.markdown("展示不同维度组合下的关键指标表现，可用于横向比较渠道、国家或业务线。")
+        x_dim = st.selectbox("选择 X 轴维度", ["business_line", "ticket_channel", "site_code"], index=0)
+        y_dim = st.selectbox("选择 Y 轴维度", ["ticket_channel", "site_code", "business_line"], index=1)
+        metric_sel = st.radio("选择指标", ["满意度_4_5占比", "处理时长_P90", "回复次数_P90"], horizontal=True)
+        if x_dim == y_dim:
+            st.warning("⚠️ X 轴与 Y 轴不能相同。")
+        else:
+            df_hm = group_metrics(df_f.copy(), [], [x_dim, y_dim]).pivot(index=y_dim, columns=x_dim, values=metric_sel)
+            if not df_hm.empty:
+                x_vals, y_vals = df_hm.columns.tolist(), df_hm.index.tolist()
+                z_vals = df_hm.values
+                z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
+                fig_hm = go.Figure(data=go.Heatmap(
+                    z=z_vals, x=x_vals, y=y_vals, colorscale="YlGnBu",
+                    colorbar_title=str(metric_sel),
+                    hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
+                    text=z_text, texttemplate="%{text}"
+                ))
+                fig_hm.update_layout(
+                    title=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
+                    title_x=0.5, title_font=dict(size=20, color="#2B3A67"),
+                    xaxis_title=x_dim, yaxis_title=y_dim,
+                    xaxis_tickangle=-30, xaxis_tickfont=dict(size=14, color="#2B3A67"),
+                    yaxis_tickfont=dict(size=14, color="#2B3A67"),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    height=700, margin=dict(l=80, r=80, t=80, b=80)
+                )
+                st.plotly_chart(fig_hm, use_container_width=True)
+    # ============= 📤 导出分析报告 =============
+    st.header("📤 导出分析报告")
+    st.markdown("将当前所有筛选条件与分析结果导出为 Excel 文件。")
+
+    filters_text = f"时间范围: {start_date} 至 {end_date}; " \
+                   f"月份: {', '.join(month_sel) if month_sel else '全部'}; " \
+                   f"业务线: {', '.join(bl_sel) if bl_sel else '全部'}; " \
+                   f"渠道: {', '.join(ch_sel) if ch_sel else '全部'}; " \
+                   f"国家: {', '.join(site_sel) if site_sel else '全部'}"
+
+    # 热力图数据（最后一次选择）
+    try:
+        df_heatmap_export = df_hm.reset_index()
+    except Exception:
+        df_heatmap_export = pd.DataFrame()
+
+    sheets_dict = {
+        "一级问题汇总": lvl1,
+        "二级问题汇总": lvl2,
+        f"{level_choice}气泡图数据": cur_df,
+        f"{trend_level}月趋势数据": lvl1 if trend_level == "一级问题" else lvl2,
+        "热力图透视表": df_heatmap_export
+    }
+
+    export_buffer = BytesIO()
+    export_sheets(export_buffer, sheets_dict, filters_text)
+
+    st.download_button(
+        label="📥 点击下载 Excel 报告",
+        data=export_buffer,
+        file_name=f"问题层级分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
