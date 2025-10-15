@@ -146,50 +146,12 @@ if uploaded:
     tab1.dataframe(lvl1, use_container_width=True)
     tab2.dataframe(lvl2, use_container_width=True)
 
-    # ============= 📊 三指标可视化 =============
-    st.header("📊 问题类型对比图（柱=回复/时效，线=满意度）")
-    level_choice = st.selectbox("选择问题层级", ["一级问题", "二级问题"], index=0)
-    cur_df = lvl1 if level_choice == "一级问题" else lvl2
-    cur_df = cur_df.dropna(subset=["回复次数_P90", "处理时长_P90", "满意度_4_5占比"])
-
-    if not cur_df.empty:
-        x_col = "class_one" if level_choice == "一级问题" else "class_two"
-        metrics = ["回复次数_P90", "处理时长_P90", "满意度_4_5占比"]
-
-        df_plot = cur_df.copy()
-        for m in metrics:
-            df_plot[m] = pd.to_numeric(df_plot[m], errors="coerce")
-            df_plot[m + "_norm"] = (df_plot[m] - df_plot[m].min()) / (df_plot[m].max() - df_plot[m].min()) if df_plot[m].max() != df_plot[m].min() else df_plot[m]
-        numeric_cols = df_plot.select_dtypes(include=[np.number]).columns.tolist()
-        df_plot = df_plot.groupby(x_col, as_index=False)[numeric_cols].mean()
-
-        problem_choices = sorted(df_plot[x_col].unique())
-        selected_problems = st.multiselect(f"选择要显示的{level_choice}", problem_choices, default=problem_choices[:15])
-        if selected_problems:
-            df_plot = df_plot[df_plot[x_col].isin(selected_problems)]
-
-        bar_df = df_plot.melt(id_vars=[x_col], value_vars=["回复次数_P90_norm", "处理时长_P90_norm"], var_name="指标", value_name="标准化数值")
-        bar_df["指标"] = bar_df["指标"].replace({"回复次数_P90_norm": "回复次数P90", "处理时长_P90_norm": "处理时长P90"})
-
-        fig = go.Figure()
-        for metric, color in zip(["回复次数P90", "处理时长P90"], ["#5B8FF9", "#5AD8A6"]):
-            data = bar_df[bar_df["指标"] == metric]
-            fig.add_trace(go.Bar(x=data[x_col], y=data["标准化数值"], name=metric,
-                                 marker_color=color, text=[f"{v:.2f}" for v in data["标准化数值"]],
-                                 textposition="outside"))
-        fig.add_trace(go.Scatter(x=df_plot[x_col], y=df_plot["满意度_4_5占比_norm"], name="满意度(4/5占比)",
-                                 mode="lines+markers+text", line=dict(color="#F6BD16", width=3),
-                                 marker=dict(size=8), text=[f"{v:.2f}" for v in df_plot["满意度_4_5占比_norm"]],
-                                 textposition="top center"))
-        fig.update_layout(title=f"{level_choice}：问题类型三指标对比", barmode="group",
-                          xaxis_title="问题类型", yaxis_title="标准化数值(0~1)", xaxis_tickangle=-30,
-                          plot_bgcolor="white", legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center"))
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ============= 🌍 热力图分析（修正版） =============
+    # ============= 🌍 热力图分析（最终稳定+优化视觉版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
+
     if not df_f.empty:
         st.markdown("展示不同维度组合下的关键指标表现，可用于横向比较渠道、国家或业务线。")
+
         x_dim = st.selectbox("选择 X 轴维度", ["business_line", "ticket_channel", "site_code"], index=0)
         y_dim = st.selectbox("选择 Y 轴维度", ["ticket_channel", "site_code", "business_line"], index=1)
         metric_sel = st.radio("选择指标", ["满意度_4_5占比", "处理时长_P90", "回复次数_P90"], horizontal=True)
@@ -206,27 +168,43 @@ if uploaded:
                 z_vals = df_hm.values
                 z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
 
-                # ✅ 无 textfont 参数版本
+                # ✅ 安全 colorbar 写法 + 白底浅色渐变
                 fig_hm = go.Figure(
                     data=go.Heatmap(
-                        z=z_vals, x=x_vals, y=y_vals,
-                        colorscale="RdYlBu_r",
-                        colorbar=dict(title=str(metric_sel),
-                                      titlefont=dict(size=16, color="black"),
-                                      tickfont=dict(size=14, color="black")),
+                        z=z_vals,
+                        x=x_vals,
+                        y=y_vals,
+                        colorscale="YlGnBu",
+                        colorbar_title=str(metric_sel),
                         hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
-                        text=z_text, texttemplate="%{text}"
+                        text=z_text,
+                        texttemplate="%{text}"
                     )
                 )
 
                 fig_hm.update_layout(
-                    title=dict(text=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
-                               font=dict(size=20, color="#2B3A67"), x=0.5, xanchor="center"),
-                    xaxis=dict(title=x_dim, tickangle=-30, tickfont=dict(size=14), titlefont=dict(size=16)),
-                    yaxis=dict(title=y_dim, tickfont=dict(size=14), titlefont=dict(size=16)),
-                    plot_bgcolor="white", height=700,
+                    title=dict(
+                        text=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
+                        font=dict(size=20, color="#2B3A67"),
+                        x=0.5, xanchor="center"
+                    ),
+                    xaxis=dict(
+                        title=x_dim,
+                        tickangle=-30,
+                        tickfont=dict(size=14, color="#2B3A67"),
+                        titlefont=dict(size=16, color="#2B3A67")
+                    ),
+                    yaxis=dict(
+                        title=y_dim,
+                        tickfont=dict(size=14, color="#2B3A67"),
+                        titlefont=dict(size=16, color="#2B3A67")
+                    ),
+                    plot_bgcolor="white",
+                    paper_bgcolor="white",
+                    height=700,
                     margin=dict(l=80, r=80, t=80, b=80)
                 )
+
                 st.plotly_chart(fig_hm, use_container_width=True)
 
     # ============= 导出报告 =============
@@ -234,10 +212,12 @@ if uploaded:
     filters_text = f"时间范围：{start_date} ~ {end_date}；业务线：{bl_sel or '全部'}；渠道：{ch_sel or '全部'}；国家：{site_sel or '全部'}"
     buffer = BytesIO()
     export_sheets(buffer, {"一级问题": lvl1, "二级问题": lvl2}, filters_text)
-    st.download_button("📥 下载带筛选说明的Excel报告",
-                       data=buffer,
-                       file_name="客服问题层级分析报告.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(
+        "📥 下载带筛选说明的Excel报告",
+        data=buffer,
+        file_name="客服问题层级分析报告.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 else:
     st.info("请上传包含【评分(1-5)】【处理时长】【message_count】【site_code】的数据文件。")
