@@ -148,32 +148,85 @@ if uploaded:
     tab1.dataframe(lvl1, use_container_width=True)
     tab2.dataframe(lvl2, use_container_width=True)
 
+    # ============= 柱+折线图 =============
+    st.header("📊 问题类型对比图（柱=回复/时效，线=满意度）")
+    level_choice = st.selectbox("选择问题层级", ["一级问题", "二级问题"], index=0)
+    cur_df = lvl1 if level_choice == "一级问题" else lvl2
+
+    if not cur_df.empty:
+        x_col = "class_one" if level_choice == "一级问题" else "class_two"
+        cur_df = cur_df.dropna(subset=["回复次数_P90", "处理时长_P90", "满意度_4_5占比"])
+
+        metrics = ["回复次数_P90", "处理时长_P90", "满意度_4_5占比"]
+        df_plot = cur_df.copy()
+        for m in metrics:
+            df_plot[m] = pd.to_numeric(df_plot[m], errors="coerce")
+            if df_plot[m].max() != df_plot[m].min():
+                df_plot[m + "_norm"] = (df_plot[m] - df_plot[m].min()) / (df_plot[m].max() - df_plot[m].min())
+            else:
+                df_plot[m + "_norm"] = df_plot[m]
+
+        numeric_cols = df_plot.select_dtypes(include=[np.number]).columns.tolist()
+        df_plot = df_plot.groupby(x_col, as_index=False)[numeric_cols].mean()
+
+        problem_choices = sorted(df_plot[x_col].unique())
+        selected_problems = st.multiselect(f"选择要显示的{level_choice}", problem_choices, default=problem_choices[:15])
+        if selected_problems:
+            df_plot = df_plot[df_plot[x_col].isin(selected_problems)]
+
+        bar_df = df_plot.melt(id_vars=[x_col], value_vars=["回复次数_P90_norm", "处理时长_P90_norm"],
+                              var_name="指标", value_name="标准化数值")
+        bar_df["指标"] = bar_df["指标"].replace({
+            "回复次数_P90_norm": "回复次数P90",
+            "处理时长_P90_norm": "处理时长P90"
+        })
+
+        fig = go.Figure()
+        for metric, color in zip(["回复次数P90", "处理时长P90"], ["#5B8FF9", "#5AD8A6"]):
+            data = bar_df[bar_df["指标"] == metric]
+            fig.add_trace(go.Bar(
+                x=data[x_col], y=data["标准化数值"], name=metric,
+                marker_color=color, text=[f"{v:.2f}" for v in data["标准化数值"]],
+                textposition="outside"
+            ))
+
+        fig.add_trace(go.Scatter(
+            x=df_plot[x_col], y=df_plot["满意度_4_5占比_norm"],
+            name="满意度(4/5占比)", mode="lines+markers+text",
+            line=dict(color="#F6BD16", width=3),
+            marker=dict(size=8),
+            text=[f"{v:.2f}" for v in df_plot["满意度_4_5占比_norm"]],
+            textposition="top center"
+        ))
+
+        fig.update_layout(
+            title=f"{level_choice}：三指标对比（柱=回复/时效，线=满意度）",
+            barmode="group", xaxis_title="问题类型", yaxis_title="标准化数值(0~1)",
+            xaxis_tickangle=-30, plot_bgcolor="white",
+            legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     # ============= 🏆 Top5 榜单（带颜色标注） =============
     st.markdown("<h2 style='text-align:center; color:#2B3A67;'>🏆 Top5 榜单</h2>", unsafe_allow_html=True)
     x_col = "class_one"
-    df_rank = (
-        lvl1.groupby(x_col, as_index=False)
-        .agg({
-            "处理时长_P90": "mean",
-            "满意度_4_5占比": "mean",
-            "样本量": "sum"
-        })
-    )
+    df_rank = lvl1.groupby(x_col, as_index=False).agg({
+        "处理时长_P90": "mean", "满意度_4_5占比": "mean", "样本量": "sum"
+    })
 
-    col1, col2 = st.columns(2)
     def highlight(val, reverse=False):
         if pd.isna(val): return ""
         color = "#FF4D4F" if (val > 0.7 and reverse) or (val < 0.3 and not reverse) else "#52C41A" if (val > 0.7 and not reverse) or (val < 0.3 and reverse) else ""
         return f"color:{color}; font-weight:600;" if color else ""
 
+    col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"<h3 style='color:#2B3A67;'>⏱️ 处理时长最慢 Top5（按{x_col}）</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:#2B3A67;'>⏱️ 处理时长最慢 Top5</h3>", unsafe_allow_html=True)
         if not df_rank.empty:
             top5_slow = df_rank.sort_values("处理时长_P90", ascending=False).head(5)
             st.dataframe(top5_slow.style.map(lambda v: highlight(v, reverse=True), subset=["处理时长_P90"]))
-
     with col2:
-        st.markdown(f"<h3 style='color:#2B3A67;'>😞 满意度最低 Top5（按{x_col}）</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:#2B3A67;'>😞 满意度最低 Top5</h3>", unsafe_allow_html=True)
         if not df_rank.empty:
             top5_bad = df_rank.sort_values("满意度_4_5占比", ascending=True).head(5)
             st.dataframe(top5_bad.style.map(lambda v: highlight(v, reverse=False), subset=["满意度_4_5占比"]))
@@ -191,40 +244,27 @@ if uploaded:
             st.warning("⚠️ X 轴与 Y 轴不能相同，请选择不同维度。")
         else:
             df_hm = group_metrics(df_f.copy(), [], [x_dim, y_dim]).pivot(index=y_dim, columns=x_dim, values=metric_sel)
-            if df_hm.empty:
-                st.info("暂无数据可绘制热力图，请调整筛选条件。")
-            else:
+            if not df_hm.empty:
                 x_vals = [str(v) for v in df_hm.columns.tolist()]
                 y_vals = [str(v) for v in df_hm.index.tolist()]
                 z_vals = df_hm.values
                 z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
 
-                fig_hm = go.Figure(
-                    data=go.Heatmap(
-                        z=z_vals,
-                        x=x_vals,
-                        y=y_vals,
-                        colorscale="YlGnBu",
-                        colorbar_title=str(metric_sel),
-                        hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
-                        text=z_text,
-                        texttemplate="%{text}"
-                    )
-                )
+                fig_hm = go.Figure(data=go.Heatmap(
+                    z=z_vals, x=x_vals, y=y_vals, colorscale="YlGnBu",
+                    colorbar_title=str(metric_sel),
+                    hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel}: %{{z:.3f}}<extra></extra>",
+                    text=z_text, texttemplate="%{text}"
+                ))
 
                 fig_hm.update_layout(
                     title=f"{metric_sel} - {x_dim} × {y_dim} 热力图",
                     title_x=0.5,
                     title_font=dict(size=20, color="#2B3A67"),
-                    xaxis_title=x_dim,
-                    yaxis_title=y_dim,
+                    xaxis_title=x_dim, yaxis_title=y_dim,
                     xaxis_tickangle=-30,
-                    xaxis_tickfont=dict(size=14, color="#2B3A67"),
-                    yaxis_tickfont=dict(size=14, color="#2B3A67"),
-                    plot_bgcolor="white",
-                    paper_bgcolor="white",
-                    height=700,
-                    margin=dict(l=80, r=80, t=80, b=80)
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    height=700, margin=dict(l=80, r=80, t=80, b=80)
                 )
 
                 st.plotly_chart(fig_hm, use_container_width=True)
