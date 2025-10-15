@@ -443,13 +443,16 @@ if uploaded:
         if not df_bubble.empty:
             fig_bubble = go.Figure()
 
-            # 为每个问题分配不同颜色
-            color_map = {
-                name: color for name, color in zip(
-                    sorted(df_bubble[problem_field].unique()),
-                    px.colors.qualitative.Set3 * 5  # 自动循环颜色表
-                )
-            }
+            # ✅ 安全颜色映射生成
+        if problem_field in df_bubble.columns:
+            categories = sorted(df_bubble[problem_field].dropna().unique())
+            palette = (px.colors.qualitative.Set3 if hasattr(px.colors.qualitative, "Set3")
+                       else px.colors.qualitative.Set2)
+            palette = palette * (len(categories) // len(palette) + 1)
+            color_map = {cat: palette[i] for i, cat in enumerate(categories)}
+        else:
+            st.error(f"⚠️ 数据中不存在字段 {problem_field}")
+            color_map = {}
 
             # 绘制每个问题
             for pb in sorted(df_bubble[problem_field].unique()):
