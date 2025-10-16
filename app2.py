@@ -348,7 +348,7 @@ if uploaded:
                 fig_det.update_yaxes(range=[0.5, 5.5])
                 st.plotly_chart(fig_det, use_container_width=True)
     # ============= 各问题相关性分析（找出正/负相关最强的问题） =============
-    st.header("各问题分类相关性分析（回复次数/处理时长 vs 评分）")
+    st.header("🌟各问题分类相关性分析（回复次数/处理时长 vs 评分）")
     st.markdown("自动计算所有问题分类中【回复次数/处理时长】与【评分】的相关系数，找出正/负相关最强的问题。")
 
     # 选择层级
@@ -419,7 +419,7 @@ if uploaded:
                 st.plotly_chart(fig_bar, use_container_width=True)
 
         # ============= 💬 指标与满意度关系（增强版：四象限 + 下钻） =============
-    st.header("💬 指标与满意度关系（四象限增强版）")
+    st.header("💬 指标与满意度关系")
 
     if not lvl1.empty or not lvl2.empty:
         st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系。自动划分四象限，识别高/低效率与高/低满意问题。")
@@ -448,13 +448,13 @@ if uploaded:
             # ---- 四象限标签定义 ----
             def quadrant_label(row):
                 if row[x_metric] >= x_median and row[y_metric] >= y_median:
-                    return "高回复/高满意（积极沟通型）"
+                    return "高回复/高满意"
                 elif row[x_metric] >= x_median and row[y_metric] < y_median:
-                    return "高回复/低满意（流程瓶颈型）"
+                    return "高回复/低满意"
                 elif row[x_metric] < x_median and row[y_metric] >= y_median:
-                    return "低回复/高满意（高效解决型）"
+                    return "低回复/高满意"
                 else:
-                    return "低回复/低满意（潜在风险型)"
+                    return "低回复/低满意"
 
             df_bubble["象限类型"] = df_bubble.apply(quadrant_label, axis=1)
 
@@ -504,7 +504,7 @@ if uploaded:
             st.subheader("🔍 象限明细查看")
             quad_choice = st.radio(
                 "选择象限类型查看对应问题：",
-                ["高回复/高满意（积极沟通型）", "高回复/低满意（流程瓶颈型）", "低回复/高满意（高效解决型）", "低回复/低满意（潜在风险型)"],
+                ["高回复/高满意", "高回复/低满意", "低回复/高满意", "低回复/低满意"],
                 horizontal=True,
                 key="quadrant_choice"
             )
