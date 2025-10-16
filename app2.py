@@ -523,8 +523,12 @@ if uploaded:
 
                 df_bubble["象限类型"] = df_bubble.apply(quadrant_label, axis=1)
 
-                palette = px.colors.qualitative.Set3 * 3
-                color_map = {cat: palette[i] for i, cat in enumerate(sorted(df_bubble[problem_field].unique()))}
+                # 扩展颜色映射，避免 IndexError
+                palette = px.colors.qualitative.Light24 + px.colors.qualitative.Set3 + px.colors.qualitative.Dark2
+                unique_cats = sorted(df_bubble[problem_field].unique())
+                color_map = {cat: palette[i % len(palette)] for i, cat in enumerate(unique_cats)}
+
+
 
                 fig_bubble = go.Figure()
                 for pb in sorted(df_bubble[problem_field].unique()):
