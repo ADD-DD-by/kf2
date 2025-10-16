@@ -513,13 +513,13 @@ if uploaded:
 
                 def quadrant_label(row):
                     if row[x_metric] >= x_median and row[y_metric] >= y_median:
-                        return "高回复/高满意"
+                        return "高回复/高满意（积极沟通）"
                     elif row[x_metric] >= x_median and row[y_metric] < y_median:
-                        return "高回复/低满意"
+                        return "高回复/低满意（高效解决）"
                     elif row[x_metric] < x_median and row[y_metric] >= y_median:
-                        return "低回复/高满意"
+                        return "低回复/高满意（流程瓶颈）"
                     else:
-                        return "低回复/低满意"
+                        return "低回复/低满意（潜在风险)"
 
                 df_bubble["象限类型"] = df_bubble.apply(quadrant_label, axis=1)
 
@@ -547,10 +547,10 @@ if uploaded:
                 fig_bubble.add_vline(x=x_median, line=dict(color="#666666", width=1, dash="dot"))
                 fig_bubble.add_hline(y=y_median, line=dict(color="#666666", width=1, dash="dot"))
 
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.9, text="高回复/高满意", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.9, text="低回复/高满意", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.1, text="高回复/低满意", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.1, text="低回复/低满意", showarrow=False, font=dict(size=14))
+                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.9, text="高回复/高满意（积极沟通）", showarrow=False, font=dict(size=14))
+                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.9, text="低回复/高满意（高效解决）", showarrow=False, font=dict(size=14))
+                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.1, text="高回复/低满意（流程瓶颈）", showarrow=False, font=dict(size=14))
+                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.1, text="低回复/低满意（潜在风险)", showarrow=False, font=dict(size=14))
 
                 if df_bubble[x_metric].nunique() > 1 and df_bubble[y_metric].nunique() > 1:
                     corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
