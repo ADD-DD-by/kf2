@@ -418,98 +418,102 @@ if uploaded:
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-    # ============= 💬 气泡图（按问题颜色区分，无大小） =============
-    st.header("💬 指标与满意度关系（气泡图）")
+        # ============= 💬 指标与满意度关系（增强版：四象限 + 下钻） =============
+    st.header("💬 指标与满意度关系（四象限增强版）")
 
     if not lvl1.empty or not lvl2.empty:
-        st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系（颜色区分问题类别，去除气泡大小差异）。")
+        st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系。自动划分四象限，识别高/低效率与高/低满意问题。")
 
         # 可选层级与指标
-        bubble_level = st.radio("选择展示层级", ["一级问题", "二级问题"], horizontal=True)
-        x_metric = st.selectbox("选择横轴指标", ["处理时长_P90", "回复次数_P90"], index=1)
+        bubble_level = st.radio("选择展示层级", ["一级问题", "二级问题"], horizontal=True, key="bubble_level_sel")
+        x_metric = st.selectbox("选择横轴指标", ["处理时长_P90", "回复次数_P90"], index=1, key="bubble_x_metric_sel")
         y_metric = "满意度_4_5占比"
-
-        # 根据层级选择字段
         problem_field = "class_one" if bubble_level == "一级问题" else "class_two"
 
-        # ✅ 保证使用对应层级的聚合结果
         cur_src = lvl1 if bubble_level == "一级问题" else lvl2
         df_bubble = cur_src.copy().dropna(subset=[x_metric, y_metric])
-
-        if problem_field not in df_bubble.columns:
-            st.warning(f"⚠️ 当前层级 {bubble_level} 的数据中未找到字段 {problem_field}")
-        elif df_bubble.empty:
+        if df_bubble.empty or problem_field not in df_bubble.columns:
             st.warning("⚠️ 当前筛选条件下暂无可用数据。")
         else:
-            # 聚合
             df_bubble = df_bubble.groupby(problem_field, as_index=False).agg({
                 "处理时长_P90": "mean",
                 "回复次数_P90": "mean",
                 "满意度_4_5占比": "mean"
             })
 
+            # ---- 四象限边界 ----
+            x_median = df_bubble[x_metric].median()
+            y_median = df_bubble[y_metric].median()
+
+            # ---- 四象限标签定义 ----
+            def quadrant_label(row):
+                if row[x_metric] >= x_median and row[y_metric] >= y_median:
+                    return "高回复/高满意（积极沟通型）"
+                elif row[x_metric] >= x_median and row[y_metric] < y_median:
+                    return "高回复/低满意（流程瓶颈型）"
+                elif row[x_metric] < x_median and row[y_metric] >= y_median:
+                    return "低回复/高满意（高效解决型）"
+                else:
+                    return "低回复/低满意（潜在风险型)"
+
+            df_bubble["象限类型"] = df_bubble.apply(quadrant_label, axis=1)
+
+            # ---- 绘图 ----
+            palette = px.colors.qualitative.Set3 * 3
+            color_map = {cat: palette[i] for i, cat in enumerate(sorted(df_bubble[problem_field].unique()))}
+
             fig_bubble = go.Figure()
-
-            # ✅ 安全颜色映射
-            categories = sorted(df_bubble[problem_field].dropna().unique())
-            palette = (px.colors.qualitative.Set3 if hasattr(px.colors.qualitative, "Set3")
-                       else px.colors.qualitative.Set2)
-            palette = palette * (len(categories) // len(palette) + 1)
-            color_map = {cat: palette[i] for i, cat in enumerate(categories)}
-
-            # 绘制
-            for pb in categories:
+            for pb in sorted(df_bubble[problem_field].unique()):
                 data = df_bubble[df_bubble[problem_field] == pb]
                 fig_bubble.add_trace(go.Scatter(
                     x=data[x_metric],
                     y=data[y_metric],
                     mode="markers+text",
-                    name=str(pb),
+                    name=pb,
                     text=[pb],
                     textposition="top center",
-                    marker=dict(
-                        size=16,
-                        color=color_map[pb],
-                        line=dict(width=1, color="gray"),
-                        opacity=0.9
-                    ),
-                    hovertemplate=(
-                        f"{problem_field}: %{{text}}<br>"
-                        f"{x_metric}: %{{x:.2f}}<br>"
-                        f"{y_metric}: %{{y:.2f}}<extra></extra>"
-                    )
+                    marker=dict(size=14, color=color_map[pb], line=dict(width=1, color="gray"), opacity=0.9),
+                    hovertemplate=f"{problem_field}: %{{text}}<br>{x_metric}: %{{x:.2f}}<br>{y_metric}: %{{y:.2f}}<extra></extra>"
                 ))
 
-            # 趋势线
-            if len(df_bubble) > 2:
-                z = np.polyfit(df_bubble[x_metric], df_bubble[y_metric], 1)
-                p = np.poly1d(z)
-                fig_bubble.add_trace(go.Scatter(
-                    x=df_bubble[x_metric],
-                    y=p(df_bubble[x_metric]),
-                    mode="lines",
-                    line=dict(color="gray", dash="dot"),
-                    name="趋势线"
-                ))
+            # 添加四象限参考线
+            fig_bubble.add_vline(x=x_median, line=dict(color="#666666", width=1, dash="dot"))
+            fig_bubble.add_hline(y=y_median, line=dict(color="#666666", width=1, dash="dot"))
 
-            # 相关系数
+            # 添加象限文字
+            fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.9, text="高回复/高满意", showarrow=False, font=dict(size=14))
+            fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.9, text="低回复/高满意", showarrow=False, font=dict(size=14))
+            fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.1, text="高回复/低满意", showarrow=False, font=dict(size=14))
+            fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.1, text="低回复/低满意", showarrow=False, font=dict(size=14))
+
+            # 计算相关系数
             if df_bubble[x_metric].nunique() > 1 and df_bubble[y_metric].nunique() > 1:
                 corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
                 st.markdown(f"📈 **相关系数 r = {corr:.3f}** （{x_metric} 与 {y_metric}）")
-            else:
-                st.markdown("⚠️ 样本不足或数据无差异，无法计算相关系数。")
 
             fig_bubble.update_layout(
-                title=f"{bubble_level}：{x_metric} 与 {y_metric} 的关系（按问题颜色区分）",
-                xaxis_title=x_metric,
-                yaxis_title=y_metric,
-                plot_bgcolor="white",
-                height=650,
-                title_x=0.5,
+                title=f"{bubble_level}：{x_metric} 与 {y_metric} 的关系（自动四象限划分）",
+                xaxis_title=x_metric, yaxis_title=y_metric,
+                plot_bgcolor="white", height=650, title_x=0.5,
                 title_font=dict(size=20, color="#2B3A67"),
                 legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
             )
             st.plotly_chart(fig_bubble, use_container_width=True)
+
+            # ---- 下钻展示 ----
+            st.subheader("🔍 象限明细查看")
+            quad_choice = st.radio(
+                "选择象限类型查看对应问题：",
+                ["高回复/高满意（积极沟通型）", "高回复/低满意（流程瓶颈型）", "低回复/高满意（高效解决型）", "低回复/低满意（潜在风险型)"],
+                horizontal=True,
+                key="quadrant_choice"
+            )
+
+            df_quad = df_bubble[df_bubble["象限类型"] == quad_choice].sort_values(y_metric, ascending=False)
+            if df_quad.empty:
+                st.info("该象限下暂无问题。")
+            else:
+                st.dataframe(df_quad[[problem_field, "处理时长_P90", "回复次数_P90", "满意度_4_5占比"]], use_container_width=True)
 
        # ============= 📈 月度趋势图（可选指标、层级、筛选） =============
     st.header("📈 指标月度趋势分析")
