@@ -579,17 +579,15 @@ if uploaded:
                     legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
-
-       # ============= 🏆 Top5 榜单（增强版） =============
+    # ============= 🏆 Top5 榜单（支持指标与层级筛选） =============
     st.header("🏆 Top5 榜单（支持指标与层级筛选）")
 
     # ---- 用户交互控制 ----
-   col_sel1, col_sel2 = st.columns(2)
+    col_sel1, col_sel2 = st.columns(2)
     with col_sel1:
         level_sel = st.selectbox("选择问题层级（Top5模块）", ["一级问题", "二级问题"], index=0, key="top5_level_sel")
     with col_sel2:
         metric_sel = st.selectbox("选择排序指标（Top5模块）", ["处理时长_P90", "回复次数_P90"], index=0, key="top5_metric_sel")
-
 
     # ---- 根据层级选择数据源 ----
     cur_rank = lvl1.copy() if level_sel == "一级问题" else lvl2.copy()
@@ -614,7 +612,6 @@ if uploaded:
 
         # ---- 分栏展示 ----
         col1, col2 = st.columns(2)
-
         with col1:
             st.subheader(f"⏱️ {metric_sel.replace('_P90','')} 最高 Top5")
             if not df_rank.empty:
@@ -626,6 +623,7 @@ if uploaded:
             if not df_rank.empty:
                 top5_bad = df_rank.sort_values("满意度_4_5占比", ascending=True).head(5)
                 st.dataframe(top5_bad, use_container_width=True)
+
 
     # ============= 🌍 热力图分析（稳定版） =============
     st.header("🌍 维度交叉热力图（满意度 or 时效）")
