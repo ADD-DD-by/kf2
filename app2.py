@@ -585,10 +585,10 @@ if uploaded:
 
     # ---- 用户交互控制 ----
    col_sel1, col_sel2 = st.columns(2)
-with col_sel1:
-    level_sel = st.selectbox("选择问题层级（Top5模块）", ["一级问题", "二级问题"], index=0, key="top5_level_sel")
-with col_sel2:
-    metric_sel = st.selectbox("选择排序指标（Top5模块）", ["处理时长_P90", "回复次数_P90"], index=0, key="top5_metric_sel")
+    with col_sel1:
+        level_sel = st.selectbox("选择问题层级（Top5模块）", ["一级问题", "二级问题"], index=0, key="top5_level_sel")
+    with col_sel2:
+        metric_sel = st.selectbox("选择排序指标（Top5模块）", ["处理时长_P90", "回复次数_P90"], index=0, key="top5_metric_sel")
 
 
     # ---- 根据层级选择数据源 ----
