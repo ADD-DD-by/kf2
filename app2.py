@@ -564,7 +564,7 @@ if uploaded:
 
         # === 生成总结文字 ===
         conclusion = f"""
-### 🎯 满意度影响结论摘要
+### 满意度影响结论摘要
 
 1. **整体趋势：** {corr_text}
 2. **四象限结构：** {quad_summary}
