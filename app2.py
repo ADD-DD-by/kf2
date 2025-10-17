@@ -525,31 +525,46 @@ if uploaded:
     # ===================== 📋 分析结果总结 =====================
     if show_all or st.session_state["menu"] == "📋 分析结果总结":
         st.header("📋 分析结果解读与结论")
-        st.markdown("根据当前数据筛选和分析结果，自动生成满意度影响分析结论。")
+        st.markdown("根据当前筛选后的数据，自动生成【满意度 vs 回复次数 / 处理时长】的影响结论。")
 
-        # --- ① 满意度与时效总体关系 ---
-        if "处理时长" in df_f.columns and "评分" in df_f.columns:
-            sub = df_f.dropna(subset=["处理时长", "评分"])
-            if len(sub) >= 10:
-                r = np.corrcoef(sub["处理时长"], sub["评分"])[0, 1]
-                if r < -0.4:
-                    corr_text = f"全局相关系数 r = {r:.3f}，说明整体上呈显著负相关（时长越长满意度越低）。"
-                elif r < 0.4:
-                    corr_text = f"全局相关系数 r = {r:.3f}，说明整体上呈弱相关或无明显关系。"
-                else:
-                    corr_text = f"全局相关系数 r = {r:.3f}，说明整体上呈正相关（沟通频繁反而满意度更高）。"
+        df_now = df_f.copy()
+
+        # ========== ① 相关系数计算 ==========
+        def calc_corr(col):
+            if col in df_now.columns and "评分" in df_now.columns:
+                df_v = df_now.dropna(subset=[col, "评分"])
+                if len(df_v) >= 10:
+                    return np.corrcoef(df_v[col], df_v["评分"])[0, 1]
+            return np.nan
+
+        corr_time = calc_corr("处理时长")
+        corr_reply = calc_corr("message_count")
+
+        # 生成解读文字
+        def interpret_corr(r, name):
+            if np.isnan(r):
+                return f"{name} 无法计算（样本不足）"
+            elif r < -0.4:
+                return f"{name} 与满意度呈显著负相关（{r:.3f}），说明该指标越高，满意度越低。"
+            elif r < -0.1:
+                return f"{name} 与满意度呈弱负相关（{r:.3f}），可能存在一定负面影响。"
+            elif r > 0.4:
+                return f"{name} 与满意度呈显著正相关（{r:.3f}），说明该指标越高，满意度越高。"
+            elif r > 0.1:
+                return f"{name} 与满意度呈弱正相关（{r:.3f}）。"
             else:
-                corr_text = "样本不足，无法计算相关系数。"
-        else:
-            corr_text = "当前数据缺少必要字段（处理时长、评分）。"
+                return f"{name} 与满意度关系不明显（{r:.3f}）。"
 
-        # --- ② 四象限结构 ---
-        if not lvl1.empty:
-            tmp = lvl1.copy()
+        corr_text_time = interpret_corr(corr_time, "处理时长")
+        corr_text_reply = interpret_corr(corr_reply, "回复次数")
+
+        # ========== ② 四象限结构 ==========
+        df_quad = group_metrics(df_now, ["class_one"], [c for c in ["month", "business_line", "ticket_channel", "site_code"] if c in df_now.columns])
+        if not df_quad.empty:
             x_metric, y_metric = "处理时长_P90", "满意度_4_5占比"
-            x_median, y_median = tmp[x_metric].median(), tmp[y_metric].median()
+            x_median, y_median = df_quad[x_metric].median(), df_quad[y_metric].median()
 
-            def quad(row):
+            def quad_label(row):
                 if row[x_metric] >= x_median and row[y_metric] >= y_median:
                     return "高回复/高满意（积极沟通）"
                 elif row[x_metric] >= x_median and row[y_metric] < y_median:
@@ -559,46 +574,44 @@ if uploaded:
                 else:
                     return "低回复/低满意（潜在风险）"
 
-            tmp["象限类型"] = tmp.apply(quad, axis=1)
-            quad_counts = tmp["象限类型"].value_counts(normalize=True).mul(100).round(1).to_dict()
-            quad_summary = "；".join([f"{k}：{v:.1f}%" for k, v in quad_counts.items()])
+            df_quad["象限类型"] = df_quad.apply(quad_label, axis=1)
+            quad_ratio = df_quad["象限类型"].value_counts(normalize=True).mul(100).round(1).to_dict()
+            quad_summary = "；".join([f"{k}：{v:.1f}%" for k, v in quad_ratio.items()])
         else:
-            quad_summary = "暂无可用数据"
+            quad_summary = "暂无四象限数据"
 
-        # --- ③ 满意度趋势 ---
-        if "month" in df_f.columns and df_f["month"].nunique() >= 2:
-            trend = df_f.groupby("month")["评分"].mean().sort_index()
-            if len(trend) >= 2:
-                diff = (trend.iloc[-1] - trend.iloc[-2]) / trend.iloc[-2]
-                trend_text = f"最近两个月满意度平均变动 {diff:+.1%}。"
-            else:
-                trend_text = "暂无足够月度数据。"
+        # ========== ③ 满意度趋势 ==========
+        if "month" in df_now.columns and df_now["month"].nunique() >= 2:
+            trend = df_now.groupby("month")["评分"].mean().sort_index()
+            diff = (trend.iloc[-1] - trend.iloc[-2]) / trend.iloc[-2]
+            trend_text = f"最近两个月满意度平均变化 {diff:+.1%}。"
         else:
             trend_text = "暂无时间维度数据。"
 
-        # --- ④ 低满意问题 Top3 ---
-        if not lvl1.empty:
-            top_low = lvl1.sort_values("满意度_4_5占比", ascending=True).head(3)
-            low_summary = "、".join([f"{r['class_one']}（{r['满意度_4_5占比']:.1%}）" for _, r in top_low.iterrows()])
+        # ========== ④ 低满意问题 Top3 ==========
+        if not df_quad.empty:
+            low3 = df_quad.sort_values("满意度_4_5占比", ascending=True).head(3)
+            low_summary = "、".join([f"{r['class_one']}（{r['满意度_4_5占比']:.1%}）" for _, r in low3.iterrows()])
         else:
             low_summary = "暂无问题分类数据。"
 
-        # --- 汇总展示 ---
-        conclusion = f"""
+        # ========== 汇总输出 ==========
+        st.markdown(f"""
 ### 🎯 满意度影响结论摘要
 
-1. **整体趋势：** {corr_text}  
+1. **整体趋势：**  
+   - {corr_text_time}  
+   - {corr_text_reply}  
+
 2. **四象限结构：** {quad_summary}  
 3. **满意度趋势：** {trend_text}  
 4. **低满意问题：** {low_summary}
 
 **综合判断：**
-- 若处理时长显著负相关且低满意问题集中在高回复组，说明**流程效率是主要影响因素**；
-- 若回复次数与满意度正相关，说明**主动沟通有助于改善体验**；
-- 建议重点关注“高回复/低满意”象限问题，聚焦退款、补件、物流等慢节点。
-        """
-
-        st.markdown(conclusion)
+- 若“处理时长”负相关显著，说明**流程效率**是主要影响因素；  
+- 若“回复次数”正相关显著，说明**主动沟通**能提升客户体验；  
+- 若两者相关系数方向相反，说明存在“高沟通但效率低”的矛盾，应重点优化补件、退款、物流等问题。
+        """)
 
 
     # ===================== 📤 导出分析报告 =====================
