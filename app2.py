@@ -8,7 +8,7 @@ from io import BytesIO
 from datetime import datetime
 
 # ===================== 页面配置 =====================
-st.set_page_config(page_title="问题层级处理时效分析", layout="wide")
+st.set_page_config(page_title="问题层级处理时效与满意度分析", layout="wide")
 
 # ===================== 全局样式 =====================
 st.markdown("""
@@ -24,9 +24,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("💬 问题层级处理时效分析")
+st.title("💬 客服问题时效与满意度影响分析")
 
-# ===================== 📚 页面导航目录（在文件上传之前） =====================
+# ===================== 📚 页面导航目录 =====================
 st.sidebar.title("📚 页面目录导航")
 st.sidebar.markdown("### 🧩 展示模式")
 show_all = st.sidebar.toggle("显示全部模块（滚动浏览）", value=True)
@@ -34,13 +34,12 @@ show_all = st.sidebar.toggle("显示全部模块（滚动浏览）", value=True)
 menu = st.sidebar.radio(
     "快速跳转到：",
     [
-        "📑 指标汇总结果",
-        "📊 三指标对比图",
-        "🔍 明细散点分析",
-        "🌟 各问题相关性分析",
+        "📊 整体指标概览",
+        "🌟 满意度相关性分析",
         "💬 指标与满意度关系（四象限）",
         "📈 月度趋势分析",
-        "🏆 Top5 榜单",
+        "🔍 问题明细散点分析",
+        "🏆 问题Top榜单",
         "🌍 维度交叉热力图",
         "📤 导出分析报告",
     ],
@@ -104,15 +103,10 @@ def group_metrics(df, level_cols, extra_dims):
     return grouped.sort_values(sort_cols + level_cols)
 
 def add_fig_to_gallery(gallery, title, fig):
-    """收集已渲染的图表，供导出PNG到Excel使用"""
     if fig is not None:
         gallery.append((title, fig))
 
 def export_sheets_with_images(buff, sheets, filters_text, chart_gallery):
-    """
-    导出Excel：写入各DataFrame工作表 + 追加‘图表截图’工作表（若可用）。
-    需要 openpyxl + pillow；图像导出需要 plotly[kaleido]。
-    """
     try:
         from openpyxl import Workbook
         from openpyxl.utils.dataframe import dataframe_to_rows
@@ -123,43 +117,32 @@ def export_sheets_with_images(buff, sheets, filters_text, chart_gallery):
         kaleido_ok = False
 
     with pd.ExcelWriter(buff, engine="openpyxl") as writer:
-        # 筛选说明
         pd.DataFrame({"筛选条件": [filters_text]}).to_excel(writer, index=False, sheet_name="筛选说明")
-        # 各数据表
         for name, df in sheets.items():
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df.to_excel(writer, index=False, sheet_name=name)
-
-        # 图表截图
         try:
             if kaleido_ok and len(chart_gallery) > 0:
                 wb = writer.book
                 ws = wb.create_sheet("图表截图")
                 row_cursor = 1
                 for idx, (title, fig) in enumerate(chart_gallery, start=1):
-                    # 标题
                     ws.cell(row=row_cursor, column=1, value=f"{idx}. {title}")
                     row_cursor += 1
-                    # 导出PNG到内存
                     try:
-                        png_bytes = fig.to_image(format="png", scale=2)  # 需要 kaleido
+                        png_bytes = fig.to_image(format="png", scale=2)
                         img_stream = BytesIO(png_bytes)
                         pil_img = PILImage.open(img_stream)
-                        # 保存到临时文件再插入（openpyxl更稳定）
                         tmp_path = f"/tmp/chart_{idx}.png"
                         pil_img.save(tmp_path)
                         xlimg = XLImage(tmp_path)
                         ws.add_image(xlimg, f"A{row_cursor}")
-                        # 简单纵向堆叠：每张图下方空 30 行
                         row_cursor += 30
                     except Exception:
-                        # 即使单张导出失败也不中断
-                        ws.cell(row=row_cursor, column=1, value="（此图导出失败，可能缺少 kaleido 依赖）")
+                        ws.cell(row=row_cursor, column=1, value="（图表导出失败，可能缺少 kaleido）")
                         row_cursor += 2
         except Exception:
-            # 无法创建截图页也不影响其余工作表
             pass
-
     buff.seek(0)
 
 # ===================== 文件上传 =====================
@@ -224,206 +207,22 @@ if uploaded:
     # ============= 指标计算 =============
     lvl1 = group_metrics(df_f, ["class_one"], extra_dims)
     lvl2 = group_metrics(df_f, ["class_one", "class_two"], extra_dims)
-
-    # 用于导出图表的收集器
     chart_gallery = []
 
-    # ===================== 模块：📑 指标汇总 =====================
-    if show_all or st.session_state["menu"] == "📑 指标汇总结果":
-        st.header("📑 指标汇总结果")
+    # ===================== 📊 整体指标概览 =====================
+    if show_all or st.session_state["menu"] == "📊 整体指标概览":
+        st.header("📊 整体指标概览")
+        st.markdown("查看整体及各层级问题的回复次数、处理时长、满意度表现。")
         tab1, tab2 = st.tabs(["一级问题", "二级问题"])
         tab1.dataframe(lvl1, use_container_width=True)
         tab2.dataframe(lvl2, use_container_width=True)
 
-    # ===================== 模块：📊 三指标对比图 =====================
-    if show_all or st.session_state["menu"] == "📊 三指标对比图":
-        st.header("📊 三指标对比图（柱=回复/时效，线=满意度）")
-        level_choice = st.selectbox("选择问题层级", ["一级问题", "二级问题"], index=0, key="tri_level_choice")
-        cur_df = lvl1 if level_choice == "一级问题" else lvl2
+    # ===================== 🌟 满意度相关性分析 =====================
+    if show_all or st.session_state["menu"] == "🌟 满意度相关性分析":
+        st.header("🌟 满意度相关性分析")
+        st.markdown("计算【回复次数 / 处理时长】与【评分】的相关性，验证是否存在显著关系。")
 
-        if not cur_df.empty:
-            x_col = "class_one" if level_choice == "一级问题" else "class_two"
-            cur_df = cur_df.dropna(subset=["回复次数_P90", "处理时长_P90", "满意度_4_5占比"])
-
-            metrics = ["回复次数_P90", "处理时长_P90", "满意度_4_5占比"]
-            df_plot = cur_df.copy()
-            for m in metrics:
-                df_plot[m] = pd.to_numeric(df_plot[m], errors="coerce")
-                if df_plot[m].max() != df_plot[m].min():
-                    df_plot[m + "_norm"] = (df_plot[m] - df_plot[m].min()) / (df_plot[m].max() - df_plot[m].min())
-                else:
-                    df_plot[m + "_norm"] = df_plot[m]
-
-            numeric_cols = df_plot.select_dtypes(include=[np.number]).columns.tolist()
-            df_plot = df_plot.groupby(x_col, as_index=False)[numeric_cols].mean()
-
-            problem_choices = sorted(df_plot[x_col].unique())
-            selected_problems = st.multiselect(f"选择要显示的{level_choice}", problem_choices, default=problem_choices[:15], key="tri_pick_problems")
-            if selected_problems:
-                df_plot = df_plot[df_plot[x_col].isin(selected_problems)]
-
-            bar_df = df_plot.melt(id_vars=[x_col], value_vars=["回复次数_P90_norm", "处理时长_P90_norm"],
-                                  var_name="指标", value_name="标准化数值")
-            bar_df["指标"] = bar_df["指标"].replace({
-                "回复次数_P90_norm": "回复次数P90",
-                "处理时长_P90_norm": "处理时长P90"
-            })
-
-            fig = go.Figure()
-            for metric, color in zip(["回复次数P90", "处理时长P90"], ["#5B8FF9", "#5AD8A6"]):
-                data = bar_df[bar_df["指标"] == metric]
-                fig.add_trace(go.Bar(
-                    x=data[x_col], y=data["标准化数值"], name=metric,
-                    marker_color=color, text=[f"{v:.2f}" for v in data["标准化数值"]],
-                    textposition="outside"
-                ))
-
-            fig.add_trace(go.Scatter(
-                x=df_plot[x_col], y=df_plot["满意度_4_5占比_norm"],
-                name="满意度(4/5占比)", mode="lines+markers+text",
-                line=dict(color="#F6BD16", width=3),
-                marker=dict(size=8),
-                text=[f"{v:.2f}" for v in df_plot["满意度_4_5占比_norm"]],
-                textposition="top center"
-            ))
-
-            fig.update_layout(
-                title=f"{level_choice}：三指标对比（柱=回复/时效，线=满意度）",
-                barmode="group", xaxis_title="问题类型", yaxis_title="标准化数值(0~1)",
-                xaxis_tickangle=-30, plot_bgcolor="white",
-                legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            add_fig_to_gallery(chart_gallery, f"{level_choice} 三指标对比", fig)
-
-    # ===================== 模块：🔍 明细散点 =====================
-    if show_all or st.session_state["menu"] == "🔍 明细散点分析":
-        st.header("🔍 单问题分类：明细散点（回复次数/处理时长 vs 评分）")
-        st.markdown("选择一个问题分类，查看每条样本在 **回复次数 或 处理时长** 与 **评分** 之间的关系。")
-
-        # 选择层级 & 问题分类
-        detail_level = st.radio("选择问题层级用于散点", ["一级问题", "二级问题"], horizontal=True, key="detail_level_radio")
-        problem_field = "class_one" if detail_level == "一级问题" else "class_two"
-
-        # 从筛选后的原始数据中取
-        if problem_field not in df_f.columns:
-            st.info(f"当前数据没有字段：{problem_field}")
-        else:
-            problem_list = sorted(df_f[problem_field].dropna().unique().tolist())
-            if not problem_list:
-                st.info("当前筛选下没有可选的问题分类。")
-            else:
-                picked_problem = st.selectbox(f"选择{detail_level}", problem_list, key="detail_pick_problem")
-
-                # 选择横轴
-                x_choice = st.radio("选择横轴指标", ["回复次数（message_count）", "处理时长（处理时长）"], horizontal=True, key="detail_x_choice")
-                x_col_raw = "message_count" if "回复次数" in x_choice else "处理时长"
-
-                pts = df_f[df_f[problem_field] == picked_problem].copy()
-                need_cols = [x_col_raw, "评分"]
-                pts = pts.dropna(subset=[c for c in need_cols if c in pts.columns])
-
-                if x_col_raw in pts.columns:
-                    pts[x_col_raw] = pd.to_numeric(pts[x_col_raw], errors="coerce")
-                if "评分" in pts.columns:
-                    pts["评分"] = pd.to_numeric(pts["评分"], errors="coerce")
-                pts = pts.dropna(subset=need_cols)
-
-                add_jitter = st.checkbox("为散点添加轻微抖动以减少遮挡", value=True, key="detail_jitter")
-                if add_jitter:
-                    rng = np.random.default_rng(42)
-                    pts["_x"] = pts[x_col_raw].astype(float) + rng.normal(0, max(pts[x_col_raw].std() * 0.01, 1e-6), len(pts))
-                    pts["_y"] = pts["评分"].astype(float) + rng.normal(0, 0.02, len(pts))
-                else:
-                    pts["_x"] = pts[x_col_raw].astype(float)
-                    pts["_y"] = pts["评分"].astype(float)
-
-                if pts.empty:
-                    st.info("该问题分类下没有足够的数据点。")
-                else:
-                    try:
-                        r = np.corrcoef(pts[x_col_raw], pts["评分"])[0, 1]
-                    except Exception:
-                        r = np.nan
-
-                    st.markdown(f"📈 **相关系数 r = {r:.3f}**（{x_col_raw} 与 评分） | 样本数：**{len(pts)}**")
-
-                    trend_x = pts[x_col_raw].to_numpy(dtype=float)
-                    trend_y = pts["评分"].to_numpy(dtype=float)
-                    if len(pts) > 2 and np.isfinite(trend_x).all() and np.isfinite(trend_y).all():
-                        z = np.polyfit(trend_x, trend_y, 1)
-                        p = np.poly1d(z)
-                        xs = np.linspace(trend_x.min(), trend_x.max(), 100)
-                        ys = p(xs)
-                    else:
-                        xs, ys = None, None
-
-                    color_dim = st.selectbox("散点着色维度（可选）", ["不着色", "渠道 ticket_channel", "国家 site_code", "业务线 business_line"], index=0, key="detail_color_dim")
-                    if color_dim == "不着色":
-                        color_vals = None
-                        legend_name = None
-                    else:
-                        dim_map = {
-                            "渠道 ticket_channel": "ticket_channel",
-                            "国家 site_code": "site_code",
-                            "业务线 business_line": "business_line",
-                        }
-                        legend_name = dim_map[color_dim]
-                        if legend_name in pts.columns:
-                            color_vals = pts[legend_name].fillna("未知").astype(str)
-                        else:
-                            color_vals = None
-                            legend_name = None
-
-                    fig_det = go.Figure()
-                    if color_vals is None:
-                        fig_det.add_trace(go.Scattergl(
-                            x=pts["_x"], y=pts["_y"],
-                            mode="markers",
-                            name=picked_problem,
-                            marker=dict(size=9, color="#5B8FF9", opacity=0.65, line=dict(width=0.5, color="gray")),
-                            hovertemplate=f"{detail_level}: {picked_problem}<br>{x_col_raw}: %{{x:.2f}}<br>评分: %{{y:.2f}}<extra></extra>"
-                        ))
-                    else:
-                        for val in sorted(color_vals.unique()):
-                            sub = pts[color_vals == val]
-                            fig_det.add_trace(go.Scattergl(
-                                x=sub["_x"], y=sub["_y"],
-                                mode="markers",
-                                name=str(val),
-                                marker=dict(size=9, opacity=0.65, line=dict(width=0.5, color="gray")),
-                                hovertemplate=f"{legend_name}: {val}<br>{x_col_raw}: %{{x:.2f}}<br>评分: %{{y:.2f}}<extra></extra>"
-                            ))
-
-                    if xs is not None:
-                        fig_det.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="趋势线", line=dict(color="gray", width=2, dash="dot")))
-
-                    show_ref = st.checkbox("显示中位数参考线", value=False, key="detail_show_ref")
-                    if show_ref:
-                        fig_det.add_hline(y=float(np.median(trend_y)), line=dict(color="#999999", width=1, dash="dash"), annotation_text="评分中位数")
-                        fig_det.add_vline(x=float(np.median(trend_x)), line=dict(color="#999999", width=1, dash="dash"), annotation_text=f"{x_col_raw}中位数")
-
-                    fig_det.update_layout(
-                        title=f"{detail_level}：{picked_problem} —— {x_col_raw} vs 评分（明细散点）",
-                        xaxis_title=x_col_raw,
-                        yaxis_title="评分（1~5）",
-                        plot_bgcolor="white",
-                        paper_bgcolor="white",
-                        height=640,
-                        title_x=0.5,
-                        title_font=dict(size=20, color="#2B3A67"),
-                        legend=dict(orientation="h", y=1.05, x=0.5, xanchor="center"),
-                    )
-                    fig_det.update_yaxes(range=[0.5, 5.5])
-                    st.plotly_chart(fig_det, use_container_width=True)
-                    add_fig_to_gallery(chart_gallery, f"{detail_level} 明细散点 - {picked_problem}", fig_det)
-
-    # ===================== 模块：🌟 各问题相关性分析 =====================
-    if show_all or st.session_state["menu"] == "🌟 各问题相关性分析":
-        st.header("🌟各问题分类相关性分析（回复次数/处理时长 vs 评分）")
-        st.markdown("自动计算所有问题分类中【回复次数/处理时长】与【评分】的相关系数，找出正/负相关最强的问题。")
-
-        corr_level = st.radio("选择层级", ["一级问题", "二级问题"], horizontal=True, key="corr_level_radio")
+        corr_level = st.radio("选择问题层级", ["一级问题", "二级问题"], horizontal=True, key="corr_level_radio")
         problem_field = "class_one" if corr_level == "一级问题" else "class_two"
 
         if problem_field not in df_f.columns:
@@ -436,6 +235,13 @@ if uploaded:
 
             metric_sel_corr = st.selectbox("选择用于计算相关系数的指标", ["回复次数（message_count）", "处理时长（处理时长）"], index=0, key="corr_metric_sel")
             metric_col = "message_count" if "回复次数" in metric_sel_corr else "处理时长"
+
+            # === 新增整体相关系数 ===
+            try:
+                r_global = np.corrcoef(df_corr[metric_col].dropna(), df_corr["评分"].dropna())[0, 1]
+                st.markdown(f"📈 **全局相关系数 r = {r_global:.3f}**（{metric_col} 与 满意度）")
+            except Exception:
+                r_global = np.nan
 
             corr_list = []
             for pb, sub in df_corr.groupby(problem_field):
@@ -456,10 +262,10 @@ if uploaded:
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.subheader("📈 正相关最高 Top5（评分随指标升高而升高）")
+                    st.subheader("📈 正相关最高 Top5（指标升高 → 满意度升高）")
                     st.dataframe(df_r.head(5), use_container_width=True)
                 with col2:
-                    st.subheader("📉 负相关最高 Top5（评分随指标升高而下降）")
+                    st.subheader("📉 负相关最高 Top5（指标升高 → 满意度下降）")
                     st.dataframe(df_r.tail(5).iloc[::-1], use_container_width=True)
 
                 show_bar = st.checkbox("显示所有问题的相关系数条形图", value=False, key="corr_show_bar")
@@ -473,7 +279,7 @@ if uploaded:
                         textposition="outside"
                     ))
                     fig_bar.update_layout(
-                        title=f"{corr_level}：{metric_sel_corr} 与 评分 的相关系数分布",
+                        title=f"{corr_level}：{metric_sel_corr} 与 满意度 的相关系数分布",
                         xaxis_title="问题分类",
                         yaxis_title="相关系数 r",
                         xaxis_tickangle=-30,
@@ -484,14 +290,12 @@ if uploaded:
                     )
                     st.plotly_chart(fig_bar, use_container_width=True)
                     add_fig_to_gallery(chart_gallery, f"{corr_level} 相关系数条形图 - {metric_sel_corr}", fig_bar)
-
-    # ===================== 模块：💬 四象限（气泡） =====================
+                        # ===================== 💬 四象限关系 =====================
     if show_all or st.session_state["menu"] == "💬 指标与满意度关系（四象限）":
-        st.header("💬 指标与满意度关系")
+        st.header("💬 指标与满意度关系（四象限）")
+        st.markdown("通过自动划分四象限，识别不同问题在【回复次数 / 处理时长】与【满意度】上的组合特征。")
 
         if not lvl1.empty or not lvl2.empty:
-            st.markdown("展示不同问题下，回复次数或处理时长与满意度的关系。自动划分四象限，识别高/低效率与高/低满意问题。")
-
             bubble_level = st.radio("选择展示层级", ["一级问题", "二级问题"], horizontal=True, key="bubble_level_sel")
             x_metric = st.selectbox("选择横轴指标", ["处理时长_P90", "回复次数_P90"], index=1, key="bubble_x_metric_sel")
             y_metric = "满意度_4_5占比"
@@ -515,20 +319,17 @@ if uploaded:
                     if row[x_metric] >= x_median and row[y_metric] >= y_median:
                         return "高回复/高满意（积极沟通）"
                     elif row[x_metric] >= x_median and row[y_metric] < y_median:
-                        return "高回复/低满意（高效解决）"
+                        return "高回复/低满意（流程瓶颈）"
                     elif row[x_metric] < x_median and row[y_metric] >= y_median:
-                        return "低回复/高满意（流程瓶颈）"
+                        return "低回复/高满意（高效解决）"
                     else:
                         return "低回复/低满意（潜在风险)"
 
                 df_bubble["象限类型"] = df_bubble.apply(quadrant_label, axis=1)
 
-                # 扩展颜色映射，避免 IndexError
-                palette = px.colors.qualitative.Light24 + px.colors.qualitative.Set3 + px.colors.qualitative.Dark2
+                palette = px.colors.qualitative.Light24 + px.colors.qualitative.Set3
                 unique_cats = sorted(df_bubble[problem_field].unique())
                 color_map = {cat: palette[i % len(palette)] for i, cat in enumerate(unique_cats)}
-
-
 
                 fig_bubble = go.Figure()
                 for pb in sorted(df_bubble[problem_field].unique()):
@@ -547,15 +348,6 @@ if uploaded:
                 fig_bubble.add_vline(x=x_median, line=dict(color="#666666", width=1, dash="dot"))
                 fig_bubble.add_hline(y=y_median, line=dict(color="#666666", width=1, dash="dot"))
 
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.9, text="高回复/高满意（积极沟通）", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.9, text="低回复/高满意（高效解决）", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.8, y=0.1, text="高回复/低满意（流程瓶颈）", showarrow=False, font=dict(size=14))
-                fig_bubble.add_annotation(xref="paper", yref="paper", x=0.2, y=0.1, text="低回复/低满意（潜在风险)", showarrow=False, font=dict(size=14))
-
-                if df_bubble[x_metric].nunique() > 1 and df_bubble[y_metric].nunique() > 1:
-                    corr = df_bubble[[x_metric, y_metric]].corr().iloc[0, 1]
-                    st.markdown(f"📈 **相关系数 r = {corr:.3f}** （{x_metric} 与 {y_metric}）")
-
                 fig_bubble.update_layout(
                     title=f"{bubble_level}：{x_metric} 与 {y_metric} 的关系（自动四象限划分）",
                     xaxis_title=x_metric, yaxis_title=y_metric,
@@ -566,7 +358,7 @@ if uploaded:
                 st.plotly_chart(fig_bubble, use_container_width=True)
                 add_fig_to_gallery(chart_gallery, f"{bubble_level} 四象限气泡图（{x_metric} vs {y_metric}）", fig_bubble)
 
-                st.subheader("🔍 象限明细查看")
+                st.subheader("🔍 各象限问题明细")
                 quad_choice = st.radio(
                     "选择象限类型查看对应问题：",
                     ["高回复/高满意（积极沟通）", "高回复/低满意（流程瓶颈）", "低回复/高满意（高效解决）", "低回复/低满意（潜在风险)"],
@@ -579,12 +371,12 @@ if uploaded:
                 else:
                     st.dataframe(df_quad[[problem_field, "处理时长_P90", "回复次数_P90", "满意度_4_5占比"]], use_container_width=True)
 
-    # ===================== 模块：📈 月度趋势 =====================
+    # ===================== 📈 月度趋势分析 =====================
     if show_all or st.session_state["menu"] == "📈 月度趋势分析":
-        st.header("📈 指标月度趋势分析")
+        st.header("📈 指标月度趋势分析（含环比变化）")
 
         if "month" in df_f.columns:
-            st.markdown("用于分析不同问题在时间维度上的表现趋势，可选择指标、层级和筛选维度。")
+            st.markdown("观察时间维度下各指标的变化趋势，并在悬停时显示环比变化。")
 
             trend_level = st.radio("选择层级", ["一级问题", "二级问题"], horizontal=True, key="trend_level_radio")
             trend_metric = st.selectbox("选择趋势指标", ["处理时长_P90", "回复次数_P90", "满意度_4_5占比"], index=0, key="trend_metric_sel")
@@ -609,30 +401,24 @@ if uploaded:
                 df_trend = df_trend[use_cols].dropna(subset=[trend_metric])
                 df_trend = df_trend.groupby(["month", group_field], as_index=False).mean()
 
-                top_groups = sorted(df_trend[group_field].unique())
-                sel_groups = st.multiselect(f"选择要显示的{trend_dim}", top_groups, default=top_groups[:5], key="trend_groups_sel")
+                df_trend["环比变化"] = df_trend.groupby(group_field)[trend_metric].pct_change()
+
+                sel_groups = st.multiselect(f"选择要显示的{trend_dim}", sorted(df_trend[group_field].unique()), key="trend_groups_sel")
                 df_trend = df_trend[df_trend[group_field].isin(sel_groups)]
 
                 if df_trend.empty:
                     st.warning("当前筛选条件下无数据。")
                 else:
-                    fig_trend = go.Figure()
-                    for gp in sel_groups:
-                        data = df_trend[df_trend[group_field] == gp]
-                        fig_trend.add_trace(go.Scatter(
-                            x=data["month"],
-                            y=data[trend_metric],
-                            mode="lines+markers+text",
-                            name=str(gp),
-                            text=[f"{v:.2f}" for v in data[trend_metric]],
-                            textposition="top center",
-                            line=dict(width=2),
-                            marker=dict(size=6)
-                        ))
-                    fig_trend.update_layout(
+                    fig_trend = px.line(
+                        df_trend,
+                        x="month",
+                        y=trend_metric,
+                        color=group_field,
                         title=f"{trend_level}：{trend_metric} 按 {trend_dim} 的月度趋势",
-                        xaxis_title="月份",
-                        yaxis_title=trend_metric,
+                        markers=True,
+                        hover_data={"环比变化": ":.2%"}
+                    )
+                    fig_trend.update_layout(
                         plot_bgcolor="white",
                         height=650,
                         title_x=0.5,
@@ -642,87 +428,105 @@ if uploaded:
                     st.plotly_chart(fig_trend, use_container_width=True)
                     add_fig_to_gallery(chart_gallery, f"{trend_level} 月度趋势 - {trend_metric} × {trend_dim}", fig_trend)
 
-    # ===================== 模块：🏆 Top5 榜单 =====================
-    if show_all or st.session_state["menu"] == "🏆 Top5 榜单":
-        st.header("🏆 Top5 榜单（支持指标与层级筛选）")
+    # ===================== 🔍 明细散点分析 =====================
+    if show_all or st.session_state["menu"] == "🔍 问题明细散点分析":
+        st.header("🔍 问题明细散点分析")
+        st.markdown("针对单个问题，展示回复次数 / 处理时长与满意度评分之间的散点关系。")
 
-        col_sel1, col_sel2 = st.columns(2)
-        with col_sel1:
-            level_sel = st.selectbox("选择问题层级（Top5模块）", ["一级问题", "二级问题"], index=0, key="top5_level_sel")
-        with col_sel2:
-            metric_sel_rank = st.selectbox("选择排序指标（Top5模块）", ["处理时长_P90", "回复次数_P90"], index=0, key="top5_metric_sel")
+        detail_level = st.radio("选择问题层级", ["一级问题", "二级问题"], horizontal=True, key="detail_level_radio")
+        problem_field = "class_one" if detail_level == "一级问题" else "class_two"
 
-        cur_rank = lvl1.copy() if level_sel == "一级问题" else lvl2.copy()
+        if problem_field not in df_f.columns:
+            st.info(f"当前数据没有字段：{problem_field}")
+        else:
+            problem_list = sorted(df_f[problem_field].dropna().unique().tolist())
+            if not problem_list:
+                st.info("当前筛选下没有可选的问题分类。")
+            else:
+                picked_problem = st.selectbox(f"选择{detail_level}", problem_list, key="detail_pick_problem")
+                x_choice = st.radio("选择横轴指标", ["回复次数（message_count）", "处理时长（处理时长）"], horizontal=True, key="detail_x_choice")
+                x_col_raw = "message_count" if "回复次数" in x_choice else "处理时长"
+
+                pts = df_f[df_f[problem_field] == picked_problem].copy().dropna(subset=[x_col_raw, "评分"])
+                pts[x_col_raw] = pd.to_numeric(pts[x_col_raw], errors="coerce")
+                pts["评分"] = pd.to_numeric(pts["评分"], errors="coerce")
+
+                if pts.empty:
+                    st.info("该问题分类下没有足够的数据点。")
+                else:
+                    r = np.corrcoef(pts[x_col_raw], pts["评分"])[0, 1]
+                    st.markdown(f"📈 **相关系数 r = {r:.3f}**（{x_col_raw} 与 满意度）")
+
+                    fig_det = px.scatter(
+                        pts, x=x_col_raw, y="评分", color="ticket_channel" if "ticket_channel" in pts.columns else None,
+                        trendline="ols", title=f"{picked_problem}：{x_col_raw} vs 满意度"
+                    )
+                    fig_det.update_layout(plot_bgcolor="white", height=600, title_x=0.5)
+                    st.plotly_chart(fig_det, use_container_width=True)
+                    add_fig_to_gallery(chart_gallery, f"{detail_level} 明细散点 - {picked_problem}", fig_det)
+
+    # ===================== 🏆 问题Top榜单 =====================
+    if show_all or st.session_state["menu"] == "🏆 问题Top榜单":
+        st.header("🏆 问题Top榜单")
+        st.markdown("识别表现最突出或最差的问题类型，用于定位改进重点。")
+
+        level_sel = st.selectbox("选择层级", ["一级问题", "二级问题"], key="top5_level_sel")
+        metric_sel = st.selectbox("选择排序指标", ["处理时长_P90", "回复次数_P90"], key="top5_metric_sel")
+
+        cur_rank = lvl1 if level_sel == "一级问题" else lvl2
         x_col = "class_one" if level_sel == "一级问题" else "class_two"
 
         if cur_rank.empty:
-            st.info(f"当前层级 **{level_sel}** 下暂无数据。")
+            st.info("暂无数据。")
         else:
-            for need in ["处理时长_P90", "回复次数_P90", "满意度_4_5占比", "样本量"]:
-                if need not in cur_rank.columns:
-                    cur_rank[need] = np.nan
-
-            df_rank = (cur_rank.groupby(x_col, as_index=False)
-                       .agg({
-                           "处理时长_P90": "mean",
-                           "回复次数_P90": "mean",
-                           "满意度_4_5占比": "mean",
-                           "样本量": "sum"
-                       }))
+            df_rank = cur_rank.groupby(x_col, as_index=False).agg({
+                "处理时长_P90": "mean",
+                "回复次数_P90": "mean",
+                "满意度_4_5占比": "mean",
+                "样本量": "sum"
+            })
 
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader(f"⏱️ {metric_sel_rank.replace('_P90','')} 最高 Top5")
-                if not df_rank.empty:
-                    top5_metric = df_rank.sort_values(metric_sel_rank, ascending=False).head(5)
-                    st.dataframe(top5_metric, use_container_width=True)
+                st.subheader(f"⏱️ {metric_sel.replace('_P90','')} 最高 Top5")
+                st.dataframe(df_rank.sort_values(metric_sel, ascending=False).head(5), use_container_width=True)
             with col2:
                 st.subheader("😞 满意度最低 Top5")
-                if not df_rank.empty:
-                    top5_bad = df_rank.sort_values("满意度_4_5占比", ascending=True).head(5)
-                    st.dataframe(top5_bad, use_container_width=True)
+                st.dataframe(df_rank.sort_values("满意度_4_5占比", ascending=True).head(5), use_container_width=True)
 
-    # ===================== 模块：🌍 热力图 =====================
+    # ===================== 🌍 热力图 =====================
     if show_all or st.session_state["menu"] == "🌍 维度交叉热力图":
-        st.header("🌍 维度交叉热力图（满意度 or 时效）")
+        st.header("🌍 维度交叉热力图")
+        st.markdown("展示不同维度（业务线、渠道、国家）组合下的满意度或时效表现差异。")
+
         if not df_f.empty:
-            st.markdown("展示不同维度组合下的关键指标表现，可用于横向比较渠道、国家或业务线。")
             x_dim = st.selectbox("选择 X 轴维度", ["business_line", "ticket_channel", "site_code"], index=0, key="hm_x_dim")
             y_dim = st.selectbox("选择 Y 轴维度", ["ticket_channel", "site_code", "business_line"], index=1, key="hm_y_dim")
             metric_sel_hm = st.radio("选择指标", ["满意度_4_5占比", "处理时长_P90", "回复次数_P90"], horizontal=True, key="hm_metric")
             if x_dim == y_dim:
-                st.warning("⚠️ X 轴与 Y 轴不能相同。")
+                st.warning("⚠️ X 与 Y 轴不能相同。")
                 df_hm = pd.DataFrame()
             else:
                 df_hm = group_metrics(df_f.copy(), [], [x_dim, y_dim]).pivot(index=y_dim, columns=x_dim, values=metric_sel_hm)
                 if not df_hm.empty:
-                    x_vals, y_vals = df_hm.columns.tolist(), df_hm.index.tolist()
-                    z_vals = df_hm.values
-                    z_text = pd.DataFrame(z_vals, index=y_vals, columns=x_vals).round(2).astype(str).values
                     fig_hm = go.Figure(data=go.Heatmap(
-                        z=z_vals, x=x_vals, y=y_vals, colorscale="YlGnBu",
-                        colorbar_title=str(metric_sel_hm),
-                        hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel_hm}: %{{z:.3f}}<extra></extra>",
-                        text=z_text, texttemplate="%{text}"
+                        z=df_hm.values, x=df_hm.columns, y=df_hm.index,
+                        colorscale="YlGnBu", colorbar_title=str(metric_sel_hm),
+                        hovertemplate=f"{x_dim}: %{{x}}<br>{y_dim}: %{{y}}<br>{metric_sel_hm}: %{{z:.3f}}<extra></extra>"
                     ))
                     fig_hm.update_layout(
                         title=f"{metric_sel_hm} - {x_dim} × {y_dim} 热力图",
-                        title_x=0.5, title_font=dict(size=20, color="#2B3A67"),
-                        xaxis_title=x_dim, yaxis_title=y_dim,
-                        xaxis_tickangle=-30, xaxis_tickfont=dict(size=14, color="#2B3A67"),
-                        yaxis_tickfont=dict(size=14, color="#2B3A67"),
-                        plot_bgcolor="white", paper_bgcolor="white",
-                        height=700, margin=dict(l=80, r=80, t=80, b=80)
+                        title_x=0.5, plot_bgcolor="white", height=700
                     )
                     st.plotly_chart(fig_hm, use_container_width=True)
                     add_fig_to_gallery(chart_gallery, f"热力图 - {metric_sel_hm}（{x_dim} × {y_dim}）", fig_hm)
         else:
             df_hm = pd.DataFrame()
 
-    # ===================== 模块：📤 导出分析报告 =====================
+    # ===================== 📤 导出分析报告 =====================
     if show_all or st.session_state["menu"] == "📤 导出分析报告":
         st.header("📤 导出分析报告")
-        st.markdown("将当前所有筛选条件与分析结果导出为 Excel 文件（含筛选说明与已渲染图表快照，若环境支持）。")
+        st.markdown("将当前分析结果导出为 Excel 文件（含筛选条件与图表截图）。")
 
         filters_text = f"时间范围: {start_date} 至 {end_date}; " \
                        f"月份: {', '.join(month_sel) if month_sel else '全部'}; " \
@@ -735,7 +539,6 @@ if uploaded:
         except Exception:
             df_heatmap_export = pd.DataFrame()
 
-        # 注意：这里导出的是“当前已渲染/计算得到的”数据表
         sheets_dict = {
             "一级问题汇总": lvl1,
             "二级问题汇总": lvl2,
@@ -748,9 +551,9 @@ if uploaded:
         st.download_button(
             label="📥 点击下载 Excel 报告",
             data=export_buffer,
-            file_name=f"问题层级分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            file_name=f"满意度影响分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
 else:
-    st.info("请先在上方上传数据文件（支持 CSV / XLSX，多文件可合并分析）。")
+    st.info("请先上传数据文件（支持 CSV / XLSX，多文件可合并分析）。")
+
