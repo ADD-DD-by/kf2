@@ -547,7 +547,7 @@ if uploaded:
             elif r < -0.4:
                 return f"{name} 与满意度呈显著负相关（{r:.3f}），说明该指标越高，满意度越低。"
             elif r < -0.1:
-                return f"{name} 与满意度呈弱负相关（{r:.3f}），可能存在一定负面影响。"
+                return f"{name} 与满意度呈弱负相关（{r:.3f}）"
             elif r > 0.4:
                 return f"{name} 与满意度呈显著正相关（{r:.3f}），说明该指标越高，满意度越高。"
             elif r > 0.1:
